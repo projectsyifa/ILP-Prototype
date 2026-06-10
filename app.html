@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ILP Academy 2026</title>
+  <link rel="icon" type="image/png" href="assets/ILP-Logo.png" />
+
+  <!-- DNS / TCP warm-up before first Supabase query -->
+  <link rel="preconnect" href="https://epimoqqaxzajydrbvjtq.supabase.co" crossorigin />
+  <link rel="dns-prefetch" href="https://epimoqqaxzajydrbvjtq.supabase.co" />
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <!-- App styles -->
+  <link rel="stylesheet" href="assets/style.css?v=2" />
+  <link rel="stylesheet" href="assets/app.css?v=2" />
+  <link rel="stylesheet" href="assets/ui.css?v=2" />
+
+  <!-- Critical inline CSS: paint the loader immediately, before any JS -->
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:"Plus Jakarta Sans",system-ui,sans-serif;background:#F0F4FB}
+    /* Loader screen — separate from #app so it never conflicts with .app{display:grid} */
+    #page-loader{min-height:100vh;display:flex;align-items:center;justify-content:center}
+    .loader{display:flex;align-items:center;gap:10px;font-size:14px;color:#64748b}
+    .spinner{width:20px;height:20px;border:2.5px solid #E2E8F0;border-top-color:#215AA9;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    /* Content fade for SPA navigation */
+    .content{transition:opacity 0.14s ease}
+  </style>
+</head>
+<body>
+  <!-- Loader lives outside #app so it never overrides #app{display:grid} via ID specificity -->
+  <div id="page-loader"><div class="loader"><div class="spinner"></div>Memuat...</div></div>
+  <div class="app" id="app"></div>
+
+  <!-- Supabase (SW caches this after first load → instant on repeat visits) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+  <script src="assets/auth.js"></script>
+  <script src="scripts/main.js"></script>
+
+  <!-- Register Service Worker — auto-reload when a new version activates -->
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("sw.js").then(reg => {
+        reg.addEventListener("updatefound", () => {
+          const nw = reg.installing;
+          if (!nw) return;
+          nw.addEventListener("statechange", () => {
+            if (nw.state === "activated") window.location.reload();
+          });
+        });
+      }).catch(() => {});
+      // If a new SW took control while page was open, reload immediately
+      navigator.serviceWorker.addEventListener("controllerchange", () => window.location.reload());
+    }
+  </script>
+</body>
+</html>

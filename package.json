@@ -1,0 +1,18 @@
+{
+  "name": "ilp-academy-2026",
+  "version": "2.0.0",
+  "private": true,
+  "description": "ILP Academy 2026 — LMS (Vanilla JS SPA + Supabase). Auto-migrating schema.",
+  "type": "module",
+  "scripts": {
+    "migrate": "node scripts/migrate.mjs",
+    "dev": "npx --yes serve@14 . -l 5500",
+    "start": "npm run dev"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Masuk — ILP Academy 2026</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+      background: #F0F4FB;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Card container */
+    .login-card {
+      width: 100%;
+      max-width: 420px;
+      background: #fff;
+      border-radius: 24px;
+      box-shadow: 0 4px 24px rgba(15,27,45,0.1);
+      overflow: hidden;
+    }
+
+    /* Header band */
+    .login-header {
+      background: linear-gradient(135deg, #1A437B 0%, #2E65B8 100%);
+      padding: 28px 28px 24px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .login-header::before {
+      content: '';
+      position: absolute;
+      width: 200px; height: 200px;
+      background: rgba(255,255,255,0.06);
+      border-radius: 50%;
+      right: -60px; top: -80px;
+    }
+    .login-logos {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 14px;
+      position: relative;
+    }
+    .login-logo {
+      height: 44px;
+      width: auto;
+      object-fit: contain;
+      filter: brightness(0) invert(1);
+    }
+    .login-logo-divider {
+      width: 1px;
+      height: 36px;
+      background: rgba(255,255,255,0.35);
+    }
+    .login-logo-ktm {
+      height: 36px;
+    }
+    .login-program-name {
+      font-size: 18px;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: -0.01em;
+      position: relative;
+    }
+    .login-program-sub {
+      font-size: 12.5px;
+      color: rgba(255,255,255,0.7);
+      margin-top: 4px;
+      position: relative;
+    }
+
+    /* Steps */
+    .login-steps {
+      display: flex;
+      align-items: flex-start;
+      gap: 0;
+      padding: 20px 28px 16px;
+      border-bottom: 1px solid #F0F4FB;
+    }
+    .login-step {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 6px;
+      position: relative;
+    }
+    .login-step:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      top: 14px;
+      left: calc(50% + 14px);
+      right: calc(-50% + 14px);
+      height: 1.5px;
+      background: #E2E8F0;
+    }
+    .step-dot {
+      width: 30px; height: 30px;
+      border-radius: 50%;
+      background: #fff;
+      border: 2px solid #CBD5E1;
+      color: #94A3B8;
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+      font-weight: 800;
+      flex-shrink: 0;
+      z-index: 1;
+    }
+    .step-dot.active {
+      background: #1A437B;
+      border-color: #1A437B;
+      color: #fff;
+      box-shadow: 0 0 0 4px rgba(26,67,123,0.15);
+    }
+    .step-label {
+      font-size: 10.5px;
+      font-weight: 600;
+      color: #94A3B8;
+      line-height: 1.35;
+    }
+    .step-label.active {
+      color: #1A437B;
+      font-weight: 700;
+    }
+
+    /* Form area */
+    .login-body { padding: 24px 28px 28px; }
+    .login-title {
+      font-size: 17px;
+      font-weight: 800;
+      color: #0F1B2D;
+      margin-bottom: 4px;
+    }
+    .login-subtitle {
+      font-size: 13px;
+      color: #64748B;
+      margin-bottom: 22px;
+    }
+
+    .field { margin-bottom: 14px; }
+    label.lbl {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #334155;
+      margin-bottom: 6px;
+    }
+    input.inp {
+      width: 100%;
+      border: 1.5px solid #E2E8F0;
+      border-radius: 12px;
+      padding: 11px 14px;
+      font-size: 14px;
+      font-family: inherit;
+      color: #0F1B2D;
+      background: #fff;
+      outline: none;
+      transition: border 0.15s, box-shadow 0.15s;
+    }
+    input.inp:focus {
+      border-color: #215AA9;
+      box-shadow: 0 0 0 3px rgba(33,90,169,0.12);
+    }
+
+    .err-box {
+      background: #FEE2E2;
+      color: #DC2626;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 14px;
+      display: none;
+    }
+    .err-box.show { display: block; }
+
+    .btn-submit {
+      width: 100%;
+      height: 48px;
+      background: linear-gradient(135deg, #1A437B, #215AA9);
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 700;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.15s;
+      box-shadow: 0 2px 10px rgba(33,90,169,0.3);
+    }
+    .btn-submit:hover { box-shadow: 0 4px 18px rgba(33,90,169,0.42); transform: translateY(-1px); }
+    .btn-submit:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+
+    .login-note {
+      text-align: center;
+      font-size: 12px;
+      color: #94A3B8;
+      margin-top: 18px;
+      line-height: 1.6;
+    }
+
+    /* Footer */
+    .login-footer {
+      text-align: center;
+      font-size: 11.5px;
+      color: #94A3B8;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body data-page="login">
+
+  <div class="login-card">
+
+    <!-- Header -->
+    <div class="login-header">
+      <div class="login-logos">
+        <img src="assets/inspiring-lecturer-logo.png" alt="Inspiring Lecturer" class="login-logo" />
+        <div class="login-logo-divider"></div>
+        <img src="assets/ktm_solutions_id_logo.png" alt="KTM Solutions" class="login-logo login-logo-ktm" />
+      </div>
+      <p class="login-program-name">ILP Academy 2026</p>
+      <p class="login-program-sub">Inspiring Lecturer Program oleh ParagonCorp</p>
+    </div>
+
+    <!-- Onboarding Steps -->
+    <div class="login-steps">
+      <div class="login-step">
+        <div class="step-dot">1</div>
+        <span class="step-label">Terima<br>undangan email</span>
+      </div>
+      <div class="login-step">
+        <div class="step-dot">2</div>
+        <span class="step-label">Buat<br>password</span>
+      </div>
+      <div class="login-step">
+        <div class="step-dot">3</div>
+        <span class="step-label">Masuk &<br>mulai belajar</span>
+      </div>
+    </div>
+
+    <!-- Form -->
+    <div class="login-body">
+      <p class="login-title">Masuk ke akun Anda</p>
+      <p class="login-subtitle">Gunakan email dan password yang telah Anda buat dari tautan undangan.</p>
+
+      <form id="loginForm">
+        <div class="field">
+          <label class="lbl" for="email">Email</label>
+          <input class="inp" id="email" name="email" type="email" required placeholder="nama@institusi.ac.id" autocomplete="email" />
+        </div>
+        <div class="field">
+          <label class="lbl" for="password">Password</label>
+          <input class="inp" id="password" name="password" type="password" required placeholder="••••••••" autocomplete="current-password" />
+        </div>
+        <div class="err-box" id="loginError"></div>
+        <button class="btn-submit" type="submit">Masuk</button>
+      </form>
+
+      <p class="login-note">
+        Belum punya akses? Peserta bergabung melalui<br>
+        <strong>undangan email</strong> yang dikirim oleh admin program.
+      </p>
+    </div>
+
+  </div>
+
+  <p class="login-footer">© 2026 ParagonCorp — All rights reserved.</p>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="assets/auth.js"></script>
+  <script src="scripts/main.js"></script>
+</body>
+</html>
