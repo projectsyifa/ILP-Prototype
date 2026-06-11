@@ -443,21 +443,6 @@ tbody tr:hover { background: rgba(240,244,251,0.6); }
   backdrop-filter: blur(2px);
 }
 
-/* ---------- Lock-nav: must_change_password mode ---------- */
-body.lock-nav .nav-link:not([href="#profile"]) {
-  opacity: 0.3;
-  pointer-events: none;
-  filter: grayscale(1);
-}
-body.lock-nav .bottom-nav .bn-item:not([href="#profile"]) {
-  opacity: 0.3;
-  pointer-events: none;
-  filter: grayscale(1);
-}
-body.lock-nav .gsearch { opacity: 0.3; pointer-events: none; }
-body.lock-nav .tb-btn#notifBtn { opacity: 0.3; pointer-events: none; }
-body.lock-nav #profileTrigger { pointer-events: none; }
-body.lock-nav .content { filter: none; }
 
 /* ---------- Responsive: Tablet (≤860px) ---------- */
 @media (max-width: 860px) {

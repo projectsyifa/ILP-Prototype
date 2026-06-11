@@ -3,21 +3,21 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="refresh" content="0;url=login.html" />
-  <title>ILP Academy 2026</title>
+<title>ILP Academy 2026</title>
   <meta name="description" content="Platform pembelajaran resmi ILP Academy 2026 oleh ParagonCorp — pusat aktivitas training, materi, tugas, dan feedback pengembangan dosen." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="assets/style.css" />
   <link rel="stylesheet" href="assets/landing.css" />
+  <script>window.location.replace("login.html");</script>
 </head>
 <body class="landing">
 
   <!-- NAV -->
   <header class="lp-nav">
     <div class="lp-container">
-      <span style="display:flex;align-items:center;gap:10px"><img src="assets/inspiring-lecturer-logo.png" alt="Inspiring Lecturer" class="nav-logo" /><span style="width:1px;height:28px;background:#E2E8F0;display:inline-block;flex-shrink:0"></span><img src="assets/ktm_solutions_id_logo.png" alt="KTM Solutions" class="nav-logo" style="height:28px" /></span>
+      <span style="display:flex;align-items:center;gap:10px"><img src="assets/inspiring-lecturer-logo.png" alt="Inspiring Lecturer" class="nav-logo" /><span style="width:1px;height:28px;background:#E2E8F0;display:inline-block;flex-shrink:0"></span><img src="assets/ktm_solutions_id_logo.png" alt="KTM Solutions" class="nav-logo" style="height:42px" /></span>
       <a class="btn btn-primary" href="login.html">Login Peserta</a>
     </div>
   </header>
@@ -109,8 +109,10 @@
     </div>
   </footer>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="assets/auth.js"></script>
+  <script>
+    // Redirect langsung ke halaman login
+    window.location.replace("login.html");
+  </script>
   <script>
     // Hero highlights
     const highlights = [

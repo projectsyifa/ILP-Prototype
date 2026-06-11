@@ -16,6 +16,10 @@ const SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwaW1vcXFheHphanlkcmJ2anRxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAxMzIyNzIsImV4cCI6MjA5NTcwODI3Mn0.SbcLBQ-xSVJu1xD3gAoZGBC7UzgKTzCoYNiIGxVQzAw";
 const SITE_URL = window.location.origin;
 
+/* Asset version — bump this (match CACHE_VER in sw.js) whenever static assets
+   like logos are updated. Forces browser to bypass cache for those files. */
+const ASSET_VER = "v138";
+
 /* ---------- 2. Init client (global) ----------------------------------- */
 const _supabase = window.supabase
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -81,13 +85,7 @@ async function requireAuth(role) {
       navigate(_cachedProfile.role === "admin" ? "admin" : "dashboard");
       return null;
     }
-    // Force password change for participants
-    if (_cachedProfile.must_change_password && _cachedProfile.role !== "admin") {
-      const hash = window.location.hash.slice(1);
-      if (hash !== "profile") { navigate("profile"); return null; }
-    }
     return _cachedProfile;
-
   }
   const session = await getSession();
   if (!session) { window.location.href = "login.html"; return null; }
@@ -97,14 +95,6 @@ async function requireAuth(role) {
   if (role && profile.role !== role) {
     navigate(profile.role === "admin" ? "admin" : "dashboard");
     return null;
-  }
-  // Force password change: read from auth user metadata (no DB column needed)
-  const _u = (await _supabase.auth.getUser()).data?.user;
-  const mustChange = _u?.user_metadata?.must_change_password === true;
-  profile.must_change_password = mustChange;
-  if (mustChange && profile.role !== "admin") {
-    const hash = window.location.hash.slice(1);
-    if (hash !== "profile") { navigate("profile"); return null; }
   }
   return profile;
 }
@@ -194,7 +184,7 @@ function icon(name, size = 20) {
 
 /* ---------- 7. Brand / avatar helpers --------------------------------- */
 function logoHTML() {
-  return `<span style="display:flex;align-items:center;gap:10px"><img class="nav-logo" src="assets/inspiring-lecturer-logo.png" alt="Inspiring Lecturer" /><span style="width:1px;height:28px;background:#E2E8F0;display:inline-block;flex-shrink:0"></span><img class="nav-logo" src="assets/ktm_solutions_id_logo.png" alt="KTM Solutions" style="height:28px" /></span>`;
+  return `<span style="display:flex;align-items:center;gap:10px"><img class="nav-logo" src="assets/inspiring-lecturer-logo.png?${ASSET_VER}" alt="Inspiring Lecturer" /><span style="width:1px;height:28px;background:#E2E8F0;display:inline-block;flex-shrink:0"></span><img class="nav-logo" src="assets/ktm_solutions_id_logo.png?${ASSET_VER}" alt="KTM Solutions" style="height:42px" /></span>`;
 }
 const AVATAR_COLORS = ["#215AA9", "#059669", "#D97706", "#7C3AED", "#DC2626", "#0891B2", "#DB2777", "#4F46E5"];
 function initials(name) {
@@ -420,14 +410,14 @@ function renderShell(profile, navItems, roleLabel) {
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-head">
         <div class="sidebar-logo-wrap">
-          <img src="assets/inspiring-lecturer-logo.png" alt="Inspiring Lecturer" class="sidebar-logo" />
+          <img src="assets/inspiring-lecturer-logo.png?${ASSET_VER}" alt="Inspiring Lecturer" class="sidebar-logo" />
           <div class="sidebar-logo-divider"></div>
-          <img src="assets/ktm_solutions_id_logo.png" alt="KTM Solutions" class="sidebar-logo sidebar-logo-ktm" />
+          <img src="assets/ktm_solutions_id_logo.png?${ASSET_VER}" alt="KTM Solutions" class="sidebar-logo sidebar-logo-ktm" />
         </div>
       </div>
       <nav>${sidebarNav}</nav>
       <div class="sidebar-foot">
-        <div class="sidebar-copy"><span class="sidebar-copy-brand">Paragon Inspiring Lecturer 2026</span><span class="sidebar-copy-sub">Copyright &copy; 2026 All Rights Reserved</span></div>
+        <div class="sidebar-copy"><span class="sidebar-copy-brand">Inspiring Lecturer by Paragon 2026</span><span class="sidebar-copy-sub">Copyright &copy; 2026 All Rights Reserved</span></div>
       </div>
     </aside>
     <div class="main">
@@ -499,16 +489,6 @@ function renderShell(profile, navItems, roleLabel) {
   _wireNotifications(profile);
   _wireGlobalSearch(profile);
 
-  // Lock navigation when must_change_password is active
-  if (profile.must_change_password && profile.role !== "admin") {
-    document.body.classList.add("lock-nav");
-    // Intercept any attempt to navigate away from profile
-    window.addEventListener("hashchange", () => {
-      if (document.body.classList.contains("lock-nav") && location.hash.slice(1) !== "profile") {
-        location.hash = "profile";
-      }
-    });
-  }
 }
 
 /* ---------- 15. Profile dropdown -------------------------------------- */

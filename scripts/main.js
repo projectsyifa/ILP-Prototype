@@ -219,32 +219,8 @@ const PAGES = {};
    LOGIN
    ===================================================================== */
 PAGES.login = async function () {
-  const form = document.getElementById("loginForm");
-  const errBox = document.getElementById("loginError");
-
-  // ikat listener lebih dulu sebelum await agar tidak ada race condition
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    errBox.classList.add("hidden");
-    const btn = form.querySelector("button[type=submit]");
-    btn.disabled = true;
-    btn.textContent = "Memproses...";
-
-    const email = form.email.value.trim();
-    const password = form.password.value;
-    const { error } = await _supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      errBox.textContent = "Email atau password salah. Silakan coba lagi.";
-      errBox.classList.remove("hidden");
-      btn.disabled = false;
-      btn.textContent = "Masuk";
-      return;
-    }
-    const p = await getProfile();
-    window.location.href = p && p.role === "admin" ? "app.html#admin" : "app.html#dashboard";
-  });
-
-  // sudah login? arahkan sesuai peran
+  // Form handling sudah dikelola oleh inline script di login.html.
+  // Di sini hanya redirect jika peserta sudah login.
   const session = await getSession();
   if (session) {
     const p = await getProfile();
@@ -707,9 +683,9 @@ function _zoomState(t) {
     ? new Date(`${t.training_date}T${t.end_time}:00`).getTime()
     : startMs + 2 * 60 * 60 * 1000;
 
-  if (nowMs > endMs) return null;                         // session ended
-  if (nowMs >= startMs) return "live";                    // in progress
-  if (startMs - nowMs <= 60 * 60 * 1000) return "soon";  // within 60 min
+  if (nowMs > endMs) return null;                          // session ended
+  if (nowMs >= startMs) return "live";                     // in progress
+  if (startMs - nowMs <= 15 * 60 * 1000) return "soon";   // within 15 min → aktif
   return "default";
 }
 
@@ -766,12 +742,21 @@ function buildSessionCard(t, wn, o) {
     }
   }
 
-  const acts = [];
-  if (t.zoom_link && (ctx === "now" || ctx === "upcoming") && zs) {
-    const cls = zs === "live" ? "sx-btn sx-btn-live" : "sx-btn sx-btn-primary";
-    const label = zs === "live" ? "Gabung Zoom Sekarang" : zs === "soon" ? "Gabung Zoom — Segera" : "Gabung Zoom";
-    acts.push(`<a class="${cls}" href="${escapeHTML(t.zoom_link)}" target="_blank" data-zoom="${escapeHTML(t.zoom_link)}" data-tid="${t.id}" data-date="${t.training_date}" data-start="${t.start_time || ""}" data-end="${t.end_time || ""}">${icon("video", 15)} ${label}</a>`);
+  // Zoom button — selalu tampil di header jika ada link, disabled saat sudah selesai
+  let zoomHeadBtn = "";
+  if (t.zoom_link) {
+    if (ctx === "past") {
+      zoomHeadBtn = `<span class="sx-zoom-head sx-zoom-head-done" title="Sesi telah selesai">${icon("video", 13)} Zoom</span>`;
+    } else if (zs) {
+      const live = zs === "live";
+      const label = live ? "Gabung Sekarang" : zs === "soon" ? "Segera" : "Gabung Zoom";
+      zoomHeadBtn = `<a class="sx-zoom-head${live ? " sx-zoom-head-live" : ""}" href="${escapeHTML(t.zoom_link)}" target="_blank" data-zoom="${escapeHTML(t.zoom_link)}" data-tid="${t.id}" data-date="${t.training_date}" data-start="${t.start_time || ""}" data-end="${t.end_time || ""}">${icon("video", 13)} ${label}</a>`;
+    } else {
+      zoomHeadBtn = `<a class="sx-zoom-head" href="${escapeHTML(t.zoom_link)}" target="_blank">${icon("video", 13)} Zoom</a>`;
+    }
   }
+
+  const acts = [];
   if ((ctx === "now" || ctx === "past") && o.mat && o.mat.file_url) acts.push(`<button class="sx-btn sx-btn-teal" data-view-mat="${escapeHTML(o.mat.file_url)}" data-view-title="${escapeHTML(t.title)}">${icon("book", 15)} Materi</button>`);
   if ((ctx === "now" || ctx === "past") && o.asg) {
     if (!o.sub) acts.push(`<button class="sx-btn sx-btn-warn" data-upload-asg="${o.asg.id}" data-upload-deadline="${o.asg.deadline || ""}">${icon("upload", 15)} Kumpulkan Tugas</button>`);
@@ -782,17 +767,43 @@ function buildSessionCard(t, wn, o) {
   }
   if (ctx === "upcoming" && t.attachment_url) acts.push(`<a class="sx-btn sx-btn-soft" href="${escapeHTML(t.attachment_url)}" target="_blank">${icon("file", 15)} Lampiran</a>`);
 
+  // Master form buttons with inline status pill underneath each button
+  let mfActionsHtml = "";
+  if (Array.isArray(o.masterForms)) {
+    const mfByCategory = {};
+    o.masterForms.forEach(mf => { mfByCategory[mf.master_category] = mf; });
+    const styleMap = { presensi: "sx-btn-teal", pretest: "sx-btn-primary", posttest: "sx-btn-soft", tugas: "sx-btn-warn", laporan_mandiri: "sx-btn-cyan" };
+    const cols = MASTER_FORM_CATS.map((cat) => {
+      const mf = mfByCategory[cat.key];
+      const btn = mf?.gform_url
+        ? `<button class="sx-btn ${styleMap[cat.key] || "sx-btn-soft"}" data-masterform="${cat.key}" data-tid="${t.id}">${icon(cat.icon, 15)} ${cat.label}</button>`
+        : `<span class="sx-btn sx-btn-soft" style="opacity:.4;cursor:not-allowed" title="Form belum tersedia">${icon(cat.icon, 15)} ${cat.label}</span>`;
+      let pill = "";
+      if (mf?.gform_url) {
+        // Semua status dari form_responses (gform response per form + training)
+        const done = !!(o.submittedKeys && o.submittedKeys.has(`${mf.id}:${t.id}`));
+        const doneLabel = cat.key === "presensi" ? "Hadir" : "Terisi";
+        pill = done
+          ? `<span class="mf-pill mf-pill-done">${icon("check",9)} ${doneLabel}</span>`
+          : `<span class="mf-pill mf-pill-pending">${icon("clock",9)} Belum</span>`;
+      }
+      return `<div class="mf-btn-col">${btn}${pill ? `<div class="mf-pill-under">${pill}</div>` : ""}</div>`;
+    }).join("");
+    mfActionsHtml = `<div class="mf-actions-row">${cols}</div>`;
+  }
+
   const deadlineChip = (ctx !== "upcoming" && o.asg && !o.sub) ? _deadlineChip(o.asg.deadline) : "";
 
   return `<div class="sx-card${isLive ? " is-live" : ""}">
     <div class="sx-head">
-      <div class="sx-badges"><span class="sx-week">Sesi ${wn}</span>${badges.join("")}</div>
+      <div class="sx-badges"><span class="sx-week">Sesi ${wn}</span>${badges.join("")}${zoomHeadBtn}</div>
       <div class="sx-when"><span>${icon("calendar", 13)} ${ds}</span>${time ? `<span>${icon("clock", 13)} ${time}</span>` : ""}</div>
     </div>
     <h3 class="sx-title">${escapeHTML(t.title)}</h3>
     ${t.speaker ? `<p class="sx-speaker">${icon("user", 13)} ${escapeHTML(t.speaker)}</p>` : ""}
     ${deadlineChip ? `<div class="sx-dl-row">${deadlineChip}</div>` : ""}
     ${acts.length ? `<div class="sx-actions">${acts.join("")}</div>` : ""}
+    ${mfActionsHtml}
   </div>`;
 }
 
@@ -858,13 +869,16 @@ function _extractFormId(url) {
   return m ? m[1] : null;
 }
 
-function _renderInlineForm(schema, prefill) {
+function _renderInlineForm(schema, prefill, lockedIds = new Set()) {
   const items = schema.items || [];
   const rows = items.map((item, idx) => {
-    const prefillVal = prefill[item.questionId] || "";
+    const prefillVal = prefill[item.questionId] ?? "";
+    const isLocked = lockedIds.has(item.questionId);
     let inputHtml = "";
 
-    if (item.type === "radio") {
+    if (isLocked) {
+      inputHtml = `<div class="gf-locked-val">${escapeHTML(String(prefillVal) || "—")}<input type="hidden" name="q_${item.questionId}" value="${escapeHTML(String(prefillVal))}"></div>`;
+    } else if (item.type === "radio") {
       inputHtml = `<div class="gf-choices">
         ${item.options.map((opt) => `<label class="gf-choice-label">
           <input type="radio" name="q_${item.questionId}" value="${escapeHTML(opt)}" ${item.required ? "required" : ""} ${prefillVal === opt ? "checked" : ""}>
@@ -882,10 +896,10 @@ function _renderInlineForm(schema, prefill) {
         </label>`).join("")}
       </div>`;
     } else if (item.type === "rating") {
-      const lo = parseInt(item.options[0]) || 1;
-      const hi = parseInt(item.options[1]) || 5;
-      const loLabel = item.options[2] || "";
-      const hiLabel = item.options[3] || "";
+      const lo = parseInt(item.ratingLow ?? item.options?.[0]) || 1;
+      const hi = parseInt(item.ratingHigh ?? item.options?.[1]) || 5;
+      const loLabel = item.ratingLowLabel ?? item.options?.[2] ?? "";
+      const hiLabel = item.ratingHighLabel ?? item.options?.[3] ?? "";
       inputHtml = `<div>
         <div class="gf-rating-wrap" style="display:flex;gap:6px;flex-wrap:wrap">
           ${Array.from({length: hi - lo + 1}, (_, i) => lo + i).map((n) => `
@@ -898,16 +912,27 @@ function _renderInlineForm(schema, prefill) {
       </div>`;
     } else if (item.type === "textarea") {
       inputHtml = `<textarea class="gf-textarea-input" name="q_${item.questionId}" rows="4" placeholder="Tulis jawaban Anda…" ${item.required ? "required" : ""}>${escapeHTML(prefillVal)}</textarea>`;
+    } else if (item.type === "select") {
+      inputHtml = `<select class="gf-text-input" name="q_${item.questionId}" ${item.required ? "required" : ""}>
+        <option value="">— Pilih —</option>
+        ${item.options.map((o) => `<option value="${escapeHTML(o)}" ${prefillVal === o ? "selected" : ""}>${escapeHTML(o)}</option>`).join("")}
+      </select>`;
     } else if (item.type === "date") {
       inputHtml = `<input type="date" class="gf-text-input" name="q_${item.questionId}" value="${escapeHTML(prefillVal)}" ${item.required ? "required" : ""}>`;
+    } else if (item.type === "time") {
+      inputHtml = `<input type="time" class="gf-text-input" name="q_${item.questionId}" value="${escapeHTML(prefillVal)}" ${item.required ? "required" : ""}>`;
+    } else if (item.type === "number") {
+      inputHtml = `<input type="number" class="gf-text-input" name="q_${item.questionId}" value="${escapeHTML(prefillVal)}" placeholder="Tulis angka…" ${item.required ? "required" : ""}>`;
+    } else if (item.type === "file") {
+      inputHtml = `<input type="url" class="gf-text-input" name="q_${item.questionId}" value="${escapeHTML(prefillVal)}" placeholder="Tempel link file (Google Drive, dll.)" ${item.required ? "required" : ""}>`;
     } else {
       inputHtml = `<input type="text" class="gf-text-input" name="q_${item.questionId}" value="${escapeHTML(prefillVal)}" placeholder="Tulis jawaban Anda…" ${item.required ? "required" : ""}>`;
     }
 
-    return `<div class="gf-question">
-      <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:${item.description ? "4px" : "14px"}">
-        <span class="gf-q-num">${idx + 1}</span>
-        <span class="gf-q-title">${escapeHTML(item.title)}${item.required ? `<span class="req">*</span>` : ""}</span>
+    return `<div class="gf-question${isLocked ? " gf-question-locked" : ""}">
+      <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:${item.description ? "4px" : "10px"}">
+        ${isLocked ? `<span class="gf-q-lock">${icon("lock", 12)}</span>` : `<span class="gf-q-num">${idx + 1}</span>`}
+        <span class="gf-q-title">${escapeHTML(item.title)}${item.required && !isLocked ? `<span class="req">*</span>` : ""}</span>
       </div>
       ${item.description ? `<p class="gf-q-desc">${escapeHTML(item.description)}</p>` : ""}
       <div class="gf-input-area">${inputHtml}</div>
@@ -1216,6 +1241,327 @@ function buildWeekCard(t, weekNum, mat, asg, sub, attended, status) {
 }
 
 /* =====================================================================
+   MASTER FORM — Inline renderer (2-panel, same design as Kumpulkan Tugas)
+   ===================================================================== */
+async function openMasterFormInline(form, training, profile, onDone) {
+  const c = document.getElementById("content");
+  // Make content fill its flex parent exactly so height:100% works inside
+  c.style.cssText += ";display:flex;flex-direction:column;padding:10px;box-sizing:border-box;";
+  const cat = MASTER_FORM_CATS.find(c => c.key === form.master_category) || { label: form.title, icon: "clipboard", color: "#215AA9", bg: "#EFF6FF" };
+  const wn = training.week_number ? `Sesi ${training.week_number}` : "";
+  const trainingLabel = wn ? `${wn} — ${training.title}` : training.title;
+  const goBack = () => {
+    c.style.cssText = "";  // restore content styles
+    if (typeof onDone === "function") onDone(); else navigate("training");
+  };
+
+  // Show loading state in the two-panel layout
+  c.innerHTML = `
+    <div style="display:grid;grid-template-columns:300px 1fr;gap:0;height:calc(100% - 10px);margin-bottom:10px;border-radius:16px;border:1px solid #E2E8F0;box-shadow:0 4px 24px rgba(30,64,175,.08);overflow:hidden">
+      <div style="background:linear-gradient(160deg,#122D55 0%,#1A437B 55%,#1E5094 100%);padding:24px 22px;display:flex;flex-direction:column;gap:0">
+        <button id="mfBackBtn" style="background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;margin-bottom:20px;width:fit-content">${icon("arrow-left",13)} Kembali</button>
+        <div style="font-size:10px;font-weight:700;letter-spacing:1px;color:rgba(255,255,255,.6);text-transform:uppercase;margin-bottom:8px">${escapeHTML(cat.label)}</div>
+        <h2 style="font-size:14px;font-weight:800;color:#fff;line-height:1.4">${escapeHTML(training.title)}</h2>
+      </div>
+      <div style="background:#fff;display:flex;align-items:center;justify-content:center">
+        <div class="loader"><div class="spinner"></div>Memuat formulir…</div>
+      </div>
+    </div>`;
+  document.getElementById("mfBackBtn").addEventListener("click", goBack);
+
+  // Convert hex questionId/entryId to decimal string (Google Forms prefill format)
+  const _hexToDec = (h) => {
+    if (!h) return null;
+    const s = String(h);
+    return /^[0-9a-f]+$/i.test(s) && !/^\d+$/.test(s) ? parseInt(s, 16).toString() : s;
+  };
+
+  // Profile field → stored entry column mapping (decimal for Google Forms entry.XXXX)
+  const profileEntries = {
+    "Nama Lengkap":  _hexToDec(form.entry_nama),
+    "ID Peserta":    _hexToDec(form.entry_id_peserta),
+    "Email":         _hexToDec(form.entry_email),
+    "Institusi":     _hexToDec(form.entry_institusi),
+    "Sesi Training": _hexToDec(form.entry_training),
+  };
+
+  // Profile field values for auto-fill
+  const trainingCode = training.training_code || "";
+  const profileFieldMap = {
+    "Nama Lengkap":  profile.full_name   || "",
+    "ID Peserta":    profile.id          || "",
+    "Email":         profile.email       || "",
+    "Institusi":     profile.institution || "",
+    "Sesi Training": trainingLabel,
+    "ID Training":   trainingCode,
+  };
+
+  // Fetch live schema from Google Forms API — this is the authoritative field list.
+  // form.fields in DB may only have profile fields and miss custom ones (e.g. "Konfirmasi Kehadiran").
+  let liveEntryIdByLabel = {};
+  let allFieldDefs = [];
+  let schemaError = null;
+
+  if (!form.gsheet_id) {
+    schemaError = "Form ini belum terhubung ke Google Form (gsheet_id kosong). Hubungi admin.";
+  } else {
+    try {
+      const schemaRes = await fetch(_edgeFnUrl("google-form-schema") + "?formId=" + encodeURIComponent(form.gsheet_id), {
+        headers: _edgeFnHeaders(),
+      });
+      const schemaJson = await schemaRes.json();
+      if (!schemaJson.ok) {
+        schemaError = "Gagal memuat skema form: " + (schemaJson.error || "Unknown error");
+      } else if (!Array.isArray(schemaJson.items) || !schemaJson.items.length) {
+        schemaError = "Google Form tidak memiliki pertanyaan. Tambahkan pertanyaan di Google Form terlebih dahulu.";
+      } else {
+        console.log("[MF] rawDebug:", JSON.stringify(schemaJson.rawDebug));
+        schemaJson.items.forEach(item => {
+          if (item.questionId && item.title) liveEntryIdByLabel[item.title] = item.questionId;
+        });
+        console.log("[MF] liveEntryIdByLabel:", JSON.stringify(liveEntryIdByLabel));
+        // DB fields are authoritative (admin-managed). Google Forms API only provides live entryIds.
+        // Only fall back to Google Forms items if DB has no fields at all.
+        const dbFields = Array.isArray(form.fields) && form.fields.length ? form.fields : null;
+        if (dbFields) {
+          allFieldDefs = dbFields.map(f => ({
+            label:           f.label,
+            type:            f.type            || "text",
+            required:        !!f.required,
+            options:         f.options         || [],
+            entryId:         liveEntryIdByLabel[f.label] || f.entryId || "",
+            description:     f.description     || "",
+            ratingLow:       f.ratingLow,
+            ratingHigh:      f.ratingHigh,
+            ratingLowLabel:  f.ratingLowLabel,
+            ratingHighLabel: f.ratingHighLabel,
+          }));
+        } else {
+          allFieldDefs = schemaJson.items.map(item => ({
+            label:          item.title,
+            type:           item.type,
+            required:       item.required,
+            options:        item.options || [],
+            entryId:        item.questionId,
+            description:    item.description || "",
+            ratingLow:      item.type === "rating" ? (parseInt(item.options?.[0]) || 1) : undefined,
+            ratingHigh:     item.type === "rating" ? (parseInt(item.options?.[1]) || 5) : undefined,
+            ratingLowLabel: item.type === "rating" ? (item.options?.[2] || "") : undefined,
+            ratingHighLabel:item.type === "rating" ? (item.options?.[3] || "") : undefined,
+          }));
+        }
+      }
+    } catch (e) {
+      schemaError = "Koneksi ke Google Forms gagal: " + e.message;
+      console.error("[form-schema fetch]", e);
+    }
+  }
+
+  // If schema fetch failed, show error — do NOT fall back to DB fields silently
+  if (schemaError) {
+    const rightPanel = c.querySelector("[data-mf-right]") || c.querySelector("div:last-child > div:last-child");
+    const errHtml = `<div style="padding:40px 32px;text-align:center">
+      <div style="color:#F59E0B;margin-bottom:12px">${icon("alert-triangle",32)}</div>
+      <p style="font-weight:700;font-size:15px;color:#1E293B;margin-bottom:8px">Gagal Memuat Pertanyaan</p>
+      <p style="font-size:13px;color:#64748B;margin-bottom:16px">${escapeHTML(schemaError)}</p>
+      <button class="btn btn-primary btn-sm" id="mfRetryBtn">${icon("refresh",13)} Coba Lagi</button>
+    </div>`;
+    c.innerHTML = errHtml;
+    document.getElementById("mfRetryBtn")?.addEventListener("click", () => openMasterFormInline(form, training, profile, onDone));
+    return;
+  }
+
+  const allItems = allFieldDefs.map((fld, idx) => ({
+    questionId: liveEntryIdByLabel[fld.label] || profileEntries[fld.label] || _hexToDec(fld.entryId) || `local_${idx}`,
+    title:      fld.label,
+    type:       fld.type       || "text",
+    required:   !!fld.required,
+    description: fld.description || "",
+    options:    fld.options    || [],
+    ratingLow:       fld.ratingLow,
+    ratingHigh:      fld.ratingHigh,
+    ratingLowLabel:  fld.ratingLowLabel,
+    ratingHighLabel: fld.ratingHighLabel,
+  }));
+
+  if (!allItems.length) {
+    c.innerHTML = `<div class="card card-pad" style="text-align:center;padding:48px">
+      <div style="color:var(--bad);margin-bottom:12px">${icon("x-circle",32)}</div>
+      <p style="font-weight:700;font-size:16px">Formulir belum dikonfigurasi</p>
+      <p style="font-size:13px;color:var(--ink-500);margin-top:6px">Admin belum menambahkan pertanyaan pada formulir ini.</p>
+      <button class="btn btn-ghost btn-sm" id="mfBackBtn2" style="margin-top:16px">${icon("arrow-left",14)} Kembali</button>
+    </div>`;
+    document.getElementById("mfBackBtn2").addEventListener("click", goBack);
+    return;
+  }
+
+  // DEBUG — remove after fix
+  console.log("[MF] allFieldDefs:", JSON.stringify(allFieldDefs.map(f => f.label)));
+  console.log("[MF] allItems:", JSON.stringify(allItems.map(i => ({ title: i.title, qid: i.questionId }))));
+
+  // Build prefill map and locked set for profile fields
+  const prefill = {};
+  const lockedIds = new Set();
+  allItems.forEach((item) => {
+    const pval = profileFieldMap[item.title];
+    if (pval !== undefined) {
+      prefill[item.questionId] = pval;
+      lockedIds.add(item.questionId);
+    }
+  });
+
+  // Separate visible questions (to fill) from locked profile fields (hidden inputs only)
+  const visibleItems = allItems.filter(item => !lockedIds.has(item.questionId));
+  const hiddenItems  = allItems.filter(item =>  lockedIds.has(item.questionId));
+
+  const visibleSchema = { items: visibleItems };
+  const { rows } = _renderInlineForm(visibleSchema, prefill, new Set());
+
+  // Hidden inputs carry locked profile values into the FormData for submission
+  const hiddenInputs = hiddenItems.map(item =>
+    `<input type="hidden" name="q_${item.questionId}" value="${escapeHTML(String(prefill[item.questionId] || ""))}">`
+  ).join("");
+
+  const profileValues = {
+    "Nama Lengkap":  profile.full_name   || "—",
+    "ID Peserta":    profile.id          || "—",
+    "Email":         profile.email       || "—",
+    "Institusi":     profile.institution || "—",
+    "Sesi Training": trainingLabel,
+    ...(trainingCode ? { "ID Training": trainingCode } : {}),
+  };
+
+  const _formOpenedAt = Date.now();
+  c.innerHTML = `
+    <div style="display:grid;grid-template-columns:300px 1fr;gap:0;height:calc(100% - 10px);margin-bottom:10px;border-radius:16px;border:1px solid #E2E8F0;box-shadow:0 4px 24px rgba(30,64,175,.08);overflow:hidden">
+
+      <!-- LEFT PANEL -->
+      <div style="background:linear-gradient(160deg,#122D55 0%,#1A437B 55%,#1E5094 100%);padding:24px 22px;display:flex;flex-direction:column;overflow:hidden;position:relative;height:100%">
+        <div style="position:absolute;right:-40px;bottom:-40px;width:180px;height:180px;border-radius:50%;background:rgba(255,255,255,.06);pointer-events:none"></div>
+
+        <button id="mfBackBtn" style="background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;margin-bottom:20px;width:fit-content">${icon("arrow-left",13)} Kembali</button>
+
+        <div style="font-size:10px;font-weight:700;letter-spacing:1px;color:rgba(255,255,255,.6);text-transform:uppercase;margin-bottom:8px;display:flex;align-items:center;gap:5px">${icon(cat.icon,11)} ${escapeHTML(cat.label)}</div>
+
+        <div style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);border-radius:10px;padding:12px 14px;margin-bottom:16px">
+          <div style="font-size:10px;color:rgba(255,255,255,.55);font-weight:600;letter-spacing:.4px;margin-bottom:4px">${wn ? escapeHTML(wn) : "TRAINING"}</div>
+          <h2 style="font-size:14px;font-weight:800;color:#fff;line-height:1.4;margin:0">${escapeHTML(training.title)}</h2>
+          ${training.speaker ? `<p style="font-size:11.5px;color:rgba(255,255,255,.65);margin:5px 0 0">${icon("user",11)} ${escapeHTML(training.speaker)}</p>` : ""}
+          ${training.training_date ? `<p style="font-size:11.5px;color:rgba(255,255,255,.65);margin:4px 0 0">${icon("calendar",11)} ${fmtDate(training.training_date)}</p>` : ""}
+        </div>
+
+        <!-- Auto-fill profile info -->
+        <div style="background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:12px;padding:14px 16px">
+          <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,.7);letter-spacing:.5px;margin-bottom:12px;display:flex;align-items:center;gap:5px">${icon("lock",11)} DATA TERISI OTOMATIS</div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            ${Object.entries(profileValues).map(([label, val]) => `<div>
+              <div style="font-size:10px;color:rgba(255,255,255,.45);font-weight:600;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px">${label}</div>
+              <div style="font-size:12.5px;color:#fff;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.4" title="${escapeHTML(val)}">${escapeHTML(val)}</div>
+            </div>`).join("")}
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT PANEL: form questions only (profile data sent as hidden inputs) -->
+      <div style="background:#F8FAFC;display:flex;flex-direction:column;overflow-y:auto;height:100%">
+        <div style="padding:20px 28px 16px;border-bottom:1px solid #E2E8F0;flex-shrink:0;background:#fff">
+          <div style="display:inline-flex;align-items:center;gap:6px;background:${cat.bg};color:${cat.color};font-size:11px;font-weight:700;padding:4px 10px;border-radius:99px;margin-bottom:10px">${icon(cat.icon,12)} ${escapeHTML(cat.label)}</div>
+          <h3 style="font-size:17px;font-weight:800;color:#1E293B;margin:0 0 4px">${escapeHTML(form.title || cat.label)}</h3>
+          ${form.description ? `<p style="font-size:13px;color:#64748B;margin:0">${escapeHTML(form.description)}</p>` : ""}
+        </div>
+        <form id="mfFormEl" class="gf-page" style="padding:24px 28px;gap:14px;max-width:100%;margin:0">
+          ${hiddenInputs}
+          ${rows || `<div class="empty" style="padding:48px;text-align:center;color:var(--ink-400)">${icon("clipboard",32)}<p style="margin-top:12px">Tidak ada pertanyaan yang perlu diisi.</p></div>`}
+          <div class="gf-submit-area" style="margin-top:4px">
+            <span id="mfErrMsg" style="flex:1;color:var(--bad);font-size:13px"></span>
+            <button type="button" class="gf-cancel-btn" id="mfCancelBtn">Batal</button>
+            <button type="submit" class="gf-submit-btn" id="mfSubmitBtn">${icon("send",15)} Kirim Jawaban</button>
+          </div>
+        </form>
+      </div>
+    </div>`;
+
+  document.getElementById("mfBackBtn").addEventListener("click", goBack);
+  document.getElementById("mfCancelBtn").addEventListener("click", goBack);
+
+  document.getElementById("mfFormEl").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById("mfSubmitBtn");
+    const errEl = document.getElementById("mfErrMsg");
+    btn.disabled = true;
+    btn.innerHTML = `<div class="spinner" style="width:16px;height:16px;border-width:2px;margin:0 auto"></div>`;
+    errEl.textContent = "";
+
+    const fd = new FormData(e.target);
+    const answers = {};
+    // Collect all items — visible (user input) + hidden (profile auto-fill)
+    allItems.forEach((item) => {
+      const val = item.type === "checkbox"
+        ? fd.getAll(`q_${item.questionId}`)
+        : (fd.get(`q_${item.questionId}`) || "");
+      answers[item.questionId] = val;
+    });
+
+    // Validate required visible fields only
+    const missing = visibleItems.filter((item) =>
+      item.required &&
+      (Array.isArray(answers[item.questionId]) ? !answers[item.questionId].length : !answers[item.questionId])
+    );
+    if (missing.length) {
+      errEl.textContent = `Wajib diisi: ${missing.map((m) => m.title).join(", ")}`;
+      btn.disabled = false;
+      btn.innerHTML = `${icon("send",15)} Kirim Jawaban`;
+      return;
+    }
+
+    try {
+      // 1. Submit to Google Forms (saves to Spreadsheet) — only fields with real entry IDs
+      const googleAnswers = {};
+      allItems.forEach((item) => {
+        if (!/^local_/.test(item.questionId)) {
+          googleAnswers[item.questionId] = answers[item.questionId];
+        }
+      });
+      if (form.gsheet_id && Object.keys(googleAnswers).length) {
+        await _submitFormResponse(form.gsheet_id, googleAnswers);
+      }
+
+      // 2. Save only prefill (profile) fields to Supabase for status pill tracking
+      const labelledAnswers = {};
+      allItems.forEach((item) => {
+        if (lockedIds.has(item.questionId)) labelledAnswers[item.title] = answers[item.questionId];
+      });
+      labelledAnswers["ID Training"]   = trainingCode || training.id;
+      labelledAnswers["Sesi Training"] = labelledAnswers["Sesi Training"] || trainingLabel;
+      labelledAnswers["Training UUID"] = training.id;
+      const { error: insErr } = await _supabase.from("form_responses").insert({
+        form_id:       form.id,
+        respondent_id: profile.id,
+        response_data: labelledAnswers,
+        submitted_at:  new Date().toLocaleString("sv-SE", { timeZone: "Asia/Jakarta" }).replace(" ", "T") + "+07:00",
+      });
+      if (insErr) console.error("[form_responses insert]", insErr.message, insErr);
+
+      const elapsed = Math.round((Date.now() - _formOpenedAt) / 1000);
+      const elapsedStr = elapsed < 60 ? `${elapsed} detik` : `${Math.floor(elapsed/60)} menit ${elapsed%60} detik`;
+      c.innerHTML = `<div class="gf-page"><div class="gf-success">
+        <div class="gf-success-icon">🎉</div>
+        <h3>Respons Terkirim!</h3>
+        <p>Terima kasih telah mengisi <strong>${escapeHTML(cat.label)}</strong>.</p>
+        <p>Jawaban Anda telah tersimpan.</p>
+        <div class="gf-time-badge">${icon("clock",14)} Waktu pengisian: ${elapsedStr}</div>
+        <div style="margin-top:24px"><button class="gf-cancel-btn" id="mfDoneBtn" style="padding:11px 28px">${icon("arrow-left",15)} Kembali ke Training</button></div>
+      </div></div>`;
+      document.getElementById("mfDoneBtn").addEventListener("click", goBack);
+    } catch (err) {
+      errEl.textContent = "Gagal mengirim: " + ((err && err.message) || String(err));
+      btn.disabled = false;
+      btn.innerHTML = `${icon("send",15)} Kirim`;
+    }
+  });
+}
+
+/* =====================================================================
    PARTICIPANT — TRAINING
    ===================================================================== */
 PAGES.training = async function () {
@@ -1224,9 +1570,13 @@ PAGES.training = async function () {
   renderShell(profile, PARTICIPANT_NAV, profile.institution || "Peserta");
   const c = document.getElementById("content");
 
-  const [{ data }, { data: attData }] = await Promise.all([
+  const [{ data }, { data: attData }, masterForms, { data: mfResponses }, { data: subData }, { data: asgData }] = await Promise.all([
     qc("trainings:p", () => _supabase.from("trainings").select("*").or(`visible_from.is.null,visible_from.lte.${new Date().toISOString()}`)),
     qc("att:" + profile.id, () => _supabase.from("attendances").select("training_id").eq("participant_id", profile.id).eq("attendance_status", "present")),
+    _fetchMasterForms(),
+    _supabase.from("form_responses").select("form_id, response_data").eq("respondent_id", profile.id),
+    qc("sub:" + profile.id, () => _supabase.from("submissions").select("assignment_id").eq("participant_id", profile.id)),
+    qc("assignments:p", () => _supabase.from("assignments").select("id, training_id").or(`visible_from.is.null,visible_from.lte.${new Date().toISOString()}`)),
   ]);
 
   const attended = new Set((attData || []).map((a) => a.training_id));
@@ -1240,6 +1590,30 @@ PAGES.training = async function () {
   });
   const weekNum = (t) => t.week_number || (asc.findIndex((x) => x.id === t.id) + 1);
 
+  // Build label→id map for fallback matching (responses submitted before Training UUID was added)
+  const trainingLabelToId = {};
+  (data || []).forEach((t) => {
+    const wn = t.week_number || (asc.findIndex((x) => x.id === t.id) + 1);
+    const label = `Sesi ${wn} — ${t.title}`;
+    trainingLabelToId[label] = t.id;
+    trainingLabelToId[t.title] = t.id; // fallback tanpa prefix sesi
+  });
+
+  // Build set of submitted forms: key = "{form_id}:{training_uuid}"
+  // Primary: match by "Training UUID" field; fallback: match by "Sesi Training" label
+  const submittedKeys = new Set();
+  (mfResponses || []).forEach((r) => {
+    const rd = r.response_data || {};
+    const tid = rd["Training UUID"] || trainingLabelToId[rd["Sesi Training"]] || null;
+    if (tid) submittedKeys.add(`${r.form_id}:${tid}`);
+  });
+
+  // Build set of training IDs where tugas has been submitted (via submissions table)
+  const submittedAsgIds = new Set((subData || []).map(s => s.assignment_id));
+  const submittedTugasTrainings = new Set(
+    (asgData || []).filter(a => submittedAsgIds.has(a.id) && a.training_id).map(a => a.training_id)
+  );
+
   // Display order: upcoming/live first (date asc), then past (date desc)
   const upcoming = asc.filter((t) => !t.training_date || t.training_date >= today);
   const past = [...asc.filter((t) => t.training_date && t.training_date < today)].reverse();
@@ -1249,7 +1623,7 @@ PAGES.training = async function () {
     const isPastT = t.training_date && t.training_date < today;
     const ctx = isPastT ? "past" : (t.training_date === today || _zoomState(t) === "live") ? "now" : "upcoming";
     const cat = isPastT ? "done" : "upcoming";
-    return `<div data-cat="${cat}">${buildSessionCard(t, weekNum(t), { ctx, attended: attended.has(t.id), today })}</div>`;
+    return `<div data-cat="${cat}">${buildSessionCard(t, weekNum(t), { ctx, attended: attended.has(t.id), today, masterForms, profile, submittedKeys })}</div>`;
   };
 
   const counts = { all: ordered.length, upcoming: upcoming.length, done: past.length };
@@ -1338,6 +1712,20 @@ PAGES.training = async function () {
       });
     });
   });
+
+  // Master form buttons (Presensi / Pretest / Post Test / Kumpulkan Tugas) → inline form
+  const mfByCat = {};
+  masterForms.forEach(mf => { mfByCat[mf.master_category] = mf; });
+  c.querySelectorAll("[data-masterform]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const catKey = btn.dataset.masterform;
+      const tid = btn.dataset.tid;
+      const mf = mfByCat[catKey];
+      const training = (data || []).find(t => t.id === tid);
+      if (!mf || !training) return;
+      openMasterFormInline(mf, training, profile, () => PAGES.training());
+    });
+  });
 };
 
 /* Cek apakah sekarang dalam rentang waktu training (Ã‚Â±30 menit) */
@@ -1398,7 +1786,7 @@ PAGES.materi = async function () {
     const ft = _matFileType(m.file_url);
     const t = tName[m.training_id];
     const hay = `${m.title} ${m.description || ""}`.toLowerCase();
-    return `<div class="sx-card${m.file_url ? "" : " is-disabled"}" data-search="${escapeHTML(hay)}">
+    return `<div class="sx-card sx-card-mat${m.file_url ? "" : " is-disabled"}" data-search="${escapeHTML(hay)}">
       <div class="sx-head">
         <div class="sx-badges">
           ${t ? `<span class="sx-week">Sesi ${t.week_number || ""}</span>` : ""}
@@ -1407,10 +1795,12 @@ PAGES.materi = async function () {
         <div class="sx-when"><span>${icon("calendar", 13)} ${fmtDate(m.publish_date || m.created_at)}</span></div>
       </div>
       <h3 class="sx-title">${escapeHTML(m.title)}</h3>
-      ${m.description ? `<p class="sx-speaker" style="margin-top:4px;font-size:13px;color:var(--ink-500)">${escapeHTML(m.description)}</p>` : ""}
-      ${m.file_url
-        ? `<div class="sx-actions" style="margin-top:12px"><button class="sx-btn sx-btn-teal" ${openAttr(m)}>${icon("book", 15)} Buka Materi</button></div>`
-        : `<div style="margin-top:10px"><span class="sx-badge sx-muted">${icon("clock",11)} Belum tersedia</span></div>`}
+      ${m.description ? `<p class="sx-desc">${escapeHTML(m.description)}</p>` : ""}
+      <div class="sx-card-footer">
+        ${m.file_url
+          ? `<button class="sx-btn sx-btn-teal" ${openAttr(m)}>${icon("book", 15)} Buka Materi</button>`
+          : `<span class="sx-badge sx-muted">${icon("clock",11)} Belum tersedia</span>`}
+      </div>
     </div>`;
   }).join("");
 
@@ -1470,14 +1860,34 @@ PAGES.tugas = async function () {
 
 async function renderTugas(profile) {
   const c = document.getElementById("content");
-  const [{ data: aData }, { data: sData }, { data: trainings }] = await Promise.all([
+  const [{ data: aData }, { data: sData }, { data: trainings }, masterForms, { data: mfResponses }] = await Promise.all([
     qc("assignments:p", () => _supabase.from("assignments").select("*").order("deadline", { ascending: true }).or(`visible_from.is.null,visible_from.lte.${new Date().toISOString()}`)),
     qc("sub:" + profile.id, () => _supabase.from("submissions").select("*").eq("participant_id", profile.id)),
-    qc("trainings:p", () => _supabase.from("trainings").select("id,week_number").or(`visible_from.is.null,visible_from.lte.${new Date().toISOString()}`)),
+    qc("trainings:p", () => _supabase.from("trainings").select("id,week_number,title").or(`visible_from.is.null,visible_from.lte.${new Date().toISOString()}`)),
+    _fetchMasterForms(),
+    _supabase.from("form_responses").select("form_id, response_data").eq("respondent_id", profile.id),
   ]);
   const byA = {};
   (sData || []).forEach((s) => (byA[s.assignment_id] = s));
   const wkOf = {}; (trainings || []).forEach((t) => (wkOf[t.id] = t.week_number));
+
+  // Build submittedKeys from gform responses (same logic as training page)
+  const tugasMasterForm = (masterForms || []).find(mf => mf.master_category === "tugas");
+  const trainingLabelToId = {};
+  (trainings || []).forEach((t) => {
+    const wn = t.week_number || 0;
+    trainingLabelToId[`Sesi ${wn} — ${t.title}`] = t.id;
+    trainingLabelToId[t.title] = t.id;
+  });
+  const tugasSubmittedTids = new Set();
+  if (tugasMasterForm) {
+    (mfResponses || []).forEach((r) => {
+      if (r.form_id !== tugasMasterForm.id) return;
+      const rd = r.response_data || {};
+      const tid = rd["Training UUID"] || trainingLabelToId[rd["Sesi Training"]] || null;
+      if (tid) tugasSubmittedTids.add(tid);
+    });
+  }
 
   const subIds = (sData || []).map((s) => s.id);
   let fbBySub = {};
@@ -1486,16 +1896,19 @@ async function renderTugas(profile) {
     (fbData || []).forEach((f) => { (fbBySub[f.submission_id] = fbBySub[f.submission_id] || []).push(f); });
   }
 
+  // isSubmitted: true jika ada di form_responses (gform) ATAU submissions table
+  const isSubmittedByAsg = (a) => !!(byA[a.id] || (a.training_id && tugasSubmittedTids.has(a.training_id)));
+
   const list = aData || [];
-  const doneCount = list.filter((a) => byA[a.id]).length;
+  const doneCount = list.filter((a) => isSubmittedByAsg(a)).length;
   const todoCount = list.length - doneCount;
 
   // Participant tugas timeline helper
-  function _tugasTimeline(a, sub) {
+  function _tugasTimeline(a, sub, submitted) {
     const now = Date.now();
     const past = a.deadline && new Date(a.deadline).getTime() < now;
     const isReviewed = sub?.status === "reviewed";
-    const isSubmitted = !!sub;
+    const isSubmitted = !!(sub || submitted);
     const isLate = sub?.status === "late";
 
     const steps = [
@@ -1523,29 +1936,31 @@ async function renderTugas(profile) {
   }
 
   // Participant action buttons for a tugas card — placed inline at timeline end
-  function _tugasActions(a, sub, feedbacks) {
+  function _tugasActions(a, sub, feedbacks, submitted) {
     const acts = [];
     acts.push(`<button class="sx-btn sx-btn-soft" data-detail-tugas="${a.id}" style="font-size:12px;padding:6px 12px;font-weight:600">${icon("eye",13)} Detail Tugas</button>`);
     if (a.attachment_url) acts.push(`<a class="sx-btn sx-btn-soft" href="${escapeHTML(a.attachment_url)}" target="_blank" style="font-size:12px;padding:6px 12px">${icon("file",13)} Lampiran</a>`);
-    if (!sub) {
+    if (!sub && !submitted) {
       acts.push(`<button class="sx-btn sx-btn-primary" data-submit="${a.id}" data-deadline="${a.deadline||""}" style="font-size:13px;padding:8px 18px;font-weight:700;border-radius:10px">${icon("upload",14)} Kumpulkan Tugas</button>`);
     } else {
-      acts.push(`<button class="sx-btn sx-btn-soft" data-view-sub="${a.id}" style="font-size:12px;padding:6px 12px;font-weight:600">${icon("check-circle",13)} Lihat Pengumpulan</button>`);
-      if (sub.file_url) acts.push(`<button class="sx-btn sx-btn-soft" data-view-mat="${escapeHTML(sub.file_url)}" data-view-title="File Tugas" style="font-size:12px;padding:6px 12px">${icon("file",13)} File</button>`);
+      if (sub) acts.push(`<button class="sx-btn sx-btn-soft" data-view-sub="${a.id}" style="font-size:12px;padding:6px 12px;font-weight:600">${icon("check-circle",13)} Lihat Pengumpulan</button>`);
+      if (sub?.file_url) acts.push(`<button class="sx-btn sx-btn-soft" data-view-mat="${escapeHTML(sub.file_url)}" data-view-title="File Tugas" style="font-size:12px;padding:6px 12px">${icon("file",13)} File</button>`);
     }
     return `<div style="display:flex;align-items:center;gap:6px;flex-shrink:0;padding-left:12px;flex-wrap:wrap">${acts.join("")}</div>`;
   }
 
   const cardFor = (a) => {
     const sub = byA[a.id];
+    const gformDone = a.training_id && tugasSubmittedTids.has(a.training_id);
+    const submitted = !!(sub || gformDone);
     const feedbacks = sub ? (fbBySub[sub.id] || []) : [];
-    const cat = sub ? "done" : "todo";
+    const cat = submitted ? "done" : "todo";
     const wn = wkOf[a.training_id];
     const past = a.deadline && new Date(a.deadline).getTime() < Date.now();
     const isReviewed = sub?.status === "reviewed";
     const isLate = sub?.status === "late";
 
-    const statusBadge = !sub
+    const statusBadge = !submitted
       ? (past ? `<span class="sx-badge sx-warn">${icon("clock",11)} Lewat deadline</span>` : `<span class="sx-badge sx-muted">${icon("task",11)} Belum dikumpulkan</span>`)
       : isReviewed ? `<span class="sx-badge sx-soon">${icon("star",11)} Sudah dinilai</span>`
       : isLate ? `<span class="sx-badge sx-warn">${icon("clock",11)} Terlambat</span>`
@@ -1557,7 +1972,7 @@ async function renderTugas(profile) {
           ${feedbacks.length ? `<span style="font-size:11.5px;color:#6B7280;margin-left:4px">· ${feedbacks.length} feedback</span>` : ""}
          </div>` : "";
 
-    const deadlineInfo = !sub && a.deadline
+    const deadlineInfo = !submitted && a.deadline
       ? `<div style="margin-top:4px;font-size:12px;color:${past?"#EF4444":"#64748B"};display:flex;align-items:center;gap:5px">${icon("clock",12)} Deadline: ${fmtDateTime(a.deadline)} WIB${past?" · <strong>Telah lewat</strong>":""}</div>` : "";
 
     return `<div class="sx-card" data-cat="${cat}" style="padding:14px 16px">
@@ -1572,8 +1987,8 @@ async function renderTugas(profile) {
       ${a.description ? `<p class="tg-desc" style="margin-bottom:2px">${escapeHTML(a.description)}</p>` : ""}
       ${deadlineInfo}
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-        <div style="flex:1;min-width:0">${_tugasTimeline(a, sub)}</div>
-        ${_tugasActions(a, sub, feedbacks)}
+        <div style="flex:1;min-width:0">${_tugasTimeline(a, sub, gformDone)}</div>
+        ${_tugasActions(a, sub, feedbacks, gformDone)}
       </div>
       ${gradeBox}
       ${feedbacks.length ? `<div class="tg-fb" id="fb-${sub?.id}" hidden style="margin-top:6px">${feedbacks.map((f) => `<div class="tg-fb-item" style="background:#F8FAFC;border-radius:8px;padding:8px 12px;margin-bottom:4px"><p style="font-size:12.5px;color:#334155;margin:0 0 3px">${escapeHTML(f.comment)}</p>${f.score != null ? `<span style="font-size:11px;font-weight:600;color:#059669">Nilai: ${f.score}/100 · </span>` : ""}<span style="font-size:11px;color:#94A3B8">${fmtDateTime(f.created_at)}</span></div>`).join("")}</div>` : ""}
@@ -1870,7 +2285,26 @@ PAGES.forms = async function () {
         answers[item.questionId] = item.type === "checkbox" ? fd.getAll(`q_${item.questionId}`) : (fd.get(`q_${item.questionId}`) || "");
       });
       try {
-        await _submitFormResponse(form.gsheet_id, answers);
+        // 1. Submit to Google Forms (saves to Spreadsheet)
+        const googleAnswers = {};
+        items.forEach((item) => {
+          if (!/^local_/.test(item.questionId)) googleAnswers[item.questionId] = answers[item.questionId];
+        });
+        if (form.gsheet_id && Object.keys(googleAnswers).length) {
+          await _submitFormResponse(form.gsheet_id, googleAnswers);
+        }
+
+        // 2. Save to Supabase form_responses for status tracking
+        const labelledAnswers = {};
+        items.forEach((item) => { labelledAnswers[item.title] = answers[item.questionId]; });
+        const { error: insErr } = await _supabase.from("form_responses").insert({
+          form_id:       form.id,
+          respondent_id: profile.id,
+          response_data: labelledAnswers,
+          submitted_at:  new Date().toLocaleString("sv-SE", { timeZone: "Asia/Jakarta" }).replace(" ", "T") + "+07:00",
+        });
+        if (insErr) console.error("[form_responses insert]", insErr.message, insErr);
+
         markDone(form.id);
         const elapsedSec = Math.round((Date.now() - _formOpenedAt) / 1000);
         const elapsedStr = elapsedSec < 60 ? `${elapsedSec} detik` : `${Math.floor(elapsedSec/60)} menit ${elapsedSec%60} detik`;
@@ -2641,18 +3075,20 @@ function openPesertaDetailModal({ p, attended, completed, percent, aktif, totalT
     setTimeout(() => { closeModal(); renderPeserta(); }, 900);
   });
 
-  // Reset password
+  // Reset password — kirim email reset via Supabase Auth
   document.getElementById("resetPassBtn").addEventListener("click", async () => {
     const ok = await confirmDialog({
-      title: "Reset Password?",
-      message: `Password ${escapeHTML(p.full_name||p.email)} akan direset ke ILP@2026 dan peserta wajib ganti saat login berikutnya.`,
-      confirmText: "Ya, Reset Password",
-      danger: true,
+      title: "Kirim Reset Password?",
+      message: `Email reset password akan dikirim ke <strong>${escapeHTML(p.email)}</strong>. Peserta dapat membuat password baru melalui tautan di email tersebut.`,
+      confirmText: "Ya, Kirim Email Reset",
+      danger: false,
     });
     if (!ok) return;
-    const { error } = await _supabase.from("profiles").update({ must_change_password: true }).eq("id", p.id);
-    if (error) { toast("Gagal reset password: " + error.message, "error"); return; }
-    toast("Password berhasil direset ke ILP@2026.", "success");
+    const { error } = await _supabase.auth.resetPasswordForEmail(p.email, {
+      redirectTo: window.location.origin + "/set-password.html"
+    });
+    if (error) { toast("Gagal mengirim email reset: " + error.message, "error"); return; }
+    toast("Email reset password berhasil dikirim ke " + p.email, "success");
   });
 
   // Delete
@@ -2852,7 +3288,7 @@ function openAddPesertaModal() {
 
     const { data, error } = await _supabase.auth.signUp({
       email, password,
-      options: { data: { full_name, institution, role: "participant", must_change_password: true }, emailRedirectTo: sendEmail ? undefined : null },
+      options: { data: { full_name, institution, role: "participant" }, emailRedirectTo: sendEmail ? undefined : null },
     });
     if (error) {
       msg.innerHTML = `<div class="alert alert-error">${escapeHTML(error.message)}</div>`;
@@ -2935,7 +3371,7 @@ function openAddPesertaModal() {
       document.getElementById("xlsProgBar").style.width = `${(i+1)/xlsParsed.length*100}%`;
       const { data, error } = await _supabase.auth.signUp({
         email: r.email, password: DEFAULT_PASS,
-        options: { data: { full_name: r.full_name, institution: r.institution, role: "participant", must_change_password: true } },
+        options: { data: { full_name: r.full_name, institution: r.institution, role: "participant" } },
       });
       if (error) { fail++; failList.push({ email: r.email, reason: error.message }); }
       else {
@@ -3176,39 +3612,69 @@ PAGES.adminTraining = async function () {
 async function renderAdminTraining() {
   const c = document.getElementById("content");
   _contentLoading(c, "Memuat data training…");
-  const { data } = await qc("trainings:a", () => _supabase.from("trainings").select("*").order("training_date", { ascending: false }));
+  const [{ data }, mfList] = await Promise.all([
+    qc("trainings:a", () => _supabase.from("trainings").select("*").order("training_date", { ascending: false })),
+    _fetchMasterForms(),
+  ]);
   const all = data || [];
   const speakers = [...new Set(all.map(t => t.speaker).filter(Boolean))].sort();
+  const masterByCategory = {};
+  mfList.forEach(f => { masterByCategory[f.master_category] = f; });
 
-  function renderList(items) {
-    document.getElementById("trainingListWrap").innerHTML = !items.length
-      ? `<div class="empty">Tidak ada training yang sesuai filter.</div>`
-      : items.map((t) => `
-          <div class="card card-pad flex justify-between" style="gap:10px;margin-bottom:12px">
-            <div class="flex gap-3" style="min-width:0">
-              <span class="icon-box" style="flex-shrink:0">${icon("calendar",22)}</span>
-              <div style="min-width:0">
-                <h2 class="font-display" style="font-size:17px;font-weight:700">${escapeHTML(t.title)}</h2>
-                ${t.description ? `<p class="stat-label" style="margin-top:4px">${escapeHTML(t.description)}</p>` : ""}
-                <div class="stat-label flex items-center gap-2 mt-2">
-                  ${icon("clock",14)}${fmtDate(t.training_date)}${t.start_time ? " · " + fmtTime(t.start_time) + (t.end_time ? " – " + fmtTime(t.end_time) : "") + " WIB" : ""}
-                  ${t.speaker ? `&nbsp;·&nbsp;${icon("user",13)}${escapeHTML(t.speaker)}` : ""}
-                  &nbsp;·&nbsp;<span class="badge ${isPast(t.training_date) ? "" : "badge-success"}" style="font-size:11px">${isPast(t.training_date) ? "Selesai" : "Mendatang"}</span>
-                  ${t.visible_from ? `&nbsp;·&nbsp;<span class="badge badge-warning" style="font-size:11px">${icon("calendar",11)} Tampil mulai ${fmtDate(t.visible_from)}</span>` : ""}
-                </div>
-              </div>
-            </div>
-            <div class="flex gap-2" style="flex-shrink:0;align-items:flex-start">
-              <button class="btn-icon" data-edit='${encodeData(t)}'>${icon("edit",16)}</button>
-              <button class="btn-icon danger" data-del="${t.id}">${icon("trash",16)}</button>
-            </div>
-          </div>`).join("");
-    bindEditDelete(document.getElementById("trainingListWrap"), "trainings", trainingModal, renderAdminTraining);
+  function renderCards(items) {
+    const wrap = document.getElementById("trainingListWrap");
+    if (!items.length) {
+      wrap.innerHTML = `<div class="card card-pad empty" style="padding:48px 24px">${icon("calendar",30)}<p style="margin-top:10px;font-weight:600;color:var(--ink-700)">Tidak ada training yang sesuai filter.</p></div>`;
+      return;
+    }
+    wrap.innerHTML = `<div class="grid grid-3" style="gap:10px">${items.map((t) => {
+      const past = isPast(t.training_date);
+      const iconBg = past ? "#F1F5F9" : "var(--primary-tint)";
+      const iconColor = past ? "#64748B" : "var(--primary)";
+      const timeStr = t.start_time ? fmtTime(t.start_time) + (t.end_time ? " – " + fmtTime(t.end_time) : "") + " WIB" : "";
+      const formBtns = MASTER_FORM_CATS.map((cat) => {
+        const mf = masterByCategory[cat.key];
+        if (!mf) return `<span class="btn btn-ghost btn-sm" style="opacity:.35;cursor:not-allowed" title="Form master ${cat.label} belum dibuat">${icon(cat.icon,13)} ${cat.label}</span>`;
+        return `<button class="btn btn-ghost btn-sm" data-admin-form-edit="${mf.id}" style="color:${cat.color}">${icon(cat.icon,13)} ${cat.label}</button>`;
+      }).join("");
+      return `<div class="card card-pad" style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+          <span class="kpi-ico" style="width:42px;height:42px;border-radius:11px;background:${iconBg};color:${iconColor}">${icon("presentation",20)}</span>
+          <span class="badge ${past ? "" : "badge-success"}" style="font-size:11.5px;margin-top:2px">${past ? "Selesai" : "Mendatang"}</span>
+        </div>
+        <div>
+          ${t.week_number ? `<div style="font-size:11.5px;font-weight:600;color:var(--primary);margin-bottom:4px;letter-spacing:.3px">SESI ${t.week_number}</div>` : ""}
+          <h3 style="font-size:15px;font-weight:700;color:var(--ink-900);line-height:1.35">${escapeHTML(t.title)}</h3>
+          ${t.description ? `<p style="font-size:12.5px;color:var(--ink-500);margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${escapeHTML(t.description)}</p>` : ""}
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          ${t.speaker ? `<span class="badge">${icon("user",11)} ${escapeHTML(t.speaker)}</span>` : ""}
+          ${t.zoom_link ? `<span class="badge" style="background:#E0F2FE;color:#0284C7">${icon("video",11)} Link</span>` : ""}
+          ${t.visible_from ? `<span class="badge badge-warning" style="font-size:11px">${icon("clock",11)} Tampil ${fmtDate(t.visible_from)}</span>` : ""}
+        </div>
+        <div style="font-size:12px;color:var(--ink-500);display:flex;align-items:center;gap:6px">
+          ${icon("calendar",13)} ${t.training_date ? fmtDateShort(t.training_date) : `<span style="color:#F59E0B;font-weight:600">Tanggal belum diset</span>`}
+          ${timeStr ? `${icon("clock",12)} ${timeStr}` : (t.training_date ? `<span style="color:#F59E0B;font-weight:600">· Jam belum diset</span>` : "")}
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;padding:8px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border)">${formBtns}</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost btn-sm" data-edit='${encodeData(t)}'>${icon("edit",14)} Edit</button>
+          <button class="btn btn-ghost btn-sm" data-del="${t.id}" style="color:var(--bad)">${icon("trash",14)}</button>
+        </div>
+      </div>`;
+    }).join("")}</div>`;
+    bindEditDelete(wrap, "trainings", trainingModal, renderAdminTraining);
+    wrap.querySelectorAll("[data-admin-form-edit]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        sessionStorage.setItem("openFormEditor", btn.dataset.adminFormEdit);
+        navigate("adminForms");
+      });
+    });
   }
 
   c.innerHTML =
     pageHead("Kelola Training", `${all.length} sesi training terdaftar.`,
-      `<button class="btn btn-primary" id="addBtn">${icon("plus",16)}Tambah Training</button>`) +
+      `<button class="btn btn-primary" id="addBtn">${icon("plus",16)} Tambah Training</button>`) +
     `<div class="card card-pad" style="margin-bottom:16px;padding:16px 20px">
       <div class="flex items-center gap-10px" style="flex-wrap:wrap;gap:12px">
         <div style="flex:1;min-width:180px;position:relative">
@@ -3261,7 +3727,7 @@ async function renderAdminTraining() {
       if (selTrSpk.size > 0 && !selTrSpk.has(t.speaker)) return false;
       return true;
     });
-    renderList(filtered);
+    renderCards(filtered);
   }
 
   document.getElementById("trSearch").addEventListener("input", applyTrFilter);
@@ -3279,37 +3745,94 @@ async function renderAdminTraining() {
     applyTrFilter();
   });
 
-  renderList(all);
+  renderCards(all);
 }
 
 function trainingModal(t) {
   t = t || {};
-  openModal(t.id ? "Ubah Training" : "Tambah Training", `
+  const editing = !!t.id;
+  openModal(editing ? "Ubah Training" : "Tambah Training", `
     <form id="f">
       ${t.id ? `<input type="hidden" name="id" value="${t.id}">` : ""}
-      <div class="grid grid-2">
-        <div class="field"><label class="label">Training ke-</label><input class="input" name="week_number" type="number" min="1" required value="${t.week_number || ""}" placeholder="1, 2, 3 ..."></div>
-        <div class="field"><label class="label">Tanggal</label><input class="input" name="training_date" type="date" required value="${t.training_date || ""}"></div>
+
+      <div class="tr-modal-grid">
+        <!-- Kolom kiri -->
+        <div class="tr-modal-col">
+          <div class="tr-section-label">${icon("calendar",13)} Jadwal</div>
+          <div style="display:grid;grid-template-columns:80px 1fr;gap:10px">
+            <div class="tr-field">
+              <label class="tr-label">Sesi ke-</label>
+              <input class="input tr-input" name="week_number" type="number" min="1" value="${t.week_number || ""}" placeholder="1">
+            </div>
+            <div class="tr-field">
+              <label class="tr-label">Tanggal <span style="color:#EF4444">*</span></label>
+              <input class="input tr-input" name="training_date" type="date" required value="${t.training_date || ""}">
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+            <div class="tr-field">
+              <label class="tr-label">Jam Mulai</label>
+              <input class="input tr-input" name="start_time" type="time" value="${t.start_time || ""}">
+            </div>
+            <div class="tr-field">
+              <label class="tr-label">Jam Selesai</label>
+              <input class="input tr-input" name="end_time" type="time" value="${t.end_time || ""}">
+            </div>
+          </div>
+
+          <div class="tr-divider"></div>
+          <div class="tr-section-label">${icon("user",13)} Pembicara & Zoom</div>
+          <div class="tr-field">
+            <label class="tr-label">Nama Pembicara</label>
+            <input class="input tr-input" name="speaker" value="${escapeHTML(t.speaker || "")}" placeholder="Prof. Dr. ...">
+          </div>
+          <div class="tr-field" style="margin-top:10px">
+            <label class="tr-label">Zoom / YouTube Link</label>
+            <input class="input tr-input" name="zoom_link" type="url" value="${escapeHTML(t.zoom_link || "")}" placeholder="https://zoom.us/j/...">
+            <p style="font-size:11px;color:#94A3B8;margin-top:4px">Tombol aktif otomatis 15 mnt sebelum sesi</p>
+          </div>
+        </div>
+
+        <!-- Kolom kanan -->
+        <div class="tr-modal-col">
+          <div class="tr-section-label">${icon("presentation",13)} Info Training</div>
+          <div class="tr-field">
+            <label class="tr-label">Judul Training <span style="color:#EF4444">*</span></label>
+            <input class="input tr-input" name="title" required value="${escapeHTML(t.title || "")}" placeholder="Judul sesi training...">
+          </div>
+          <div class="tr-field" style="margin-top:10px">
+            <label class="tr-label">Deskripsi</label>
+            <textarea class="input tr-input" name="description" rows="4" placeholder="Ringkasan singkat materi yang akan dibahas...">${escapeHTML(t.description || "")}</textarea>
+          </div>
+
+          <div class="tr-divider"></div>
+          <div class="tr-section-label">${icon("tag",13)} ID Training</div>
+          <div class="tr-field">
+            <input type="hidden" name="training_code" value="${escapeHTML(t.training_code || "")}">
+            <div style="background:#F1F5F9;border:1.5px solid #E2E8F0;border-radius:10px;padding:8px 12px;display:flex;align-items:center;gap:8px">
+              ${icon("tag",14)}
+              <span style="font-size:13px;font-weight:700;color:${t.training_code ? "#0F172A" : "#94A3B8"};font-family:monospace;letter-spacing:.03em">
+                ${t.training_code ? escapeHTML(t.training_code) : "Otomatis saat disimpan"}
+              </span>
+              ${t.training_code ? `<span style="margin-left:auto;font-size:10.5px;font-weight:600;color:#10B981;background:#F0FDF4;padding:2px 7px;border-radius:99px">${icon("check",9)} Aktif</span>` : ""}
+            </div>
+            <p style="font-size:11px;color:#94A3B8;margin-top:4px">Generate otomatis dari nomor sesi · tidak dapat diubah manual</p>
+          </div>
+        </div>
       </div>
-      <div class="field"><label class="label">Judul Training</label><input class="input" name="title" required value="${escapeHTML(t.title)}"></div>
-      <div class="field"><label class="label">Deskripsi</label><textarea class="input" name="description" rows="3">${escapeHTML(t.description)}</textarea></div>
-      <div class="grid grid-2">
-        <div class="field"><label class="label">Pembicara</label><input class="input" name="speaker" value="${escapeHTML(t.speaker)}"></div>
-        <div class="field"><label class="label">Zoom / YouTube Link</label><input class="input" name="zoom_link" type="url" value="${escapeHTML(t.zoom_link)}" placeholder="https://zoom.us/j/..."></div>
-        <div class="field"><label class="label">Jam Mulai</label><input class="input" name="start_time" type="time" value="${t.start_time || ""}"></div>
-        <div class="field"><label class="label">Jam Selesai</label><input class="input" name="end_time" type="time" value="${t.end_time || ""}"></div>
-      </div>
-      <div class="field" style="background:#F8FAFC;border:1px solid #E8EEF6;border-radius:12px;padding:14px">
-        <label class="label" style="color:#215AA9">${icon("calendar",14)} Jadwalkan Mulai Ditampilkan ke Peserta</label>
-        <input class="input" name="visible_from" type="datetime-local" value="${toLocalDatetimeInput(t.visible_from)}">
-        <p style="font-size:12px;color:#94A3B8;margin-top:6px">Biarkan kosong agar konten langsung tersedia. Isi tanggal &amp; waktu untuk mengatur jadwal tampil otomatis.</p>
-      </div>
-      <div id="msg"></div>
-      <button class="btn btn-primary" style="width:100%" type="submit">Simpan</button>
-    </form>`);
+
+      <div id="msg" style="margin-top:4px"></div>
+      <button class="btn btn-primary tr-submit" type="submit">${editing ? icon("check",15)+" Simpan Perubahan" : icon("plus",15)+" Tambah Training"}</button>
+    </form>`, { wide: true });
   bindCrudForm("trainings", renderAdminTraining, (fd) => {
     if (fd.week_number) fd.week_number = parseInt(fd.week_number);
-    if (fd.visible_from) fd.visible_from = new Date(fd.visible_from).toISOString();
+    delete fd.visible_from;
+    // Auto-generate training_code if empty
+    if (!fd.training_code && fd.week_number) {
+      fd.training_code = "ILP-S" + String(fd.week_number).padStart(2, "0");
+    } else if (!fd.training_code) {
+      fd.training_code = "ILP-" + new Date().toISOString().slice(0,10).replace(/-/g,"");
+    }
     return fd;
   });
 }
@@ -3480,32 +4003,77 @@ function materiModal(m) {
   m = m || {};
   const opts = (window.__trainings || []).map((t) =>
     `<option value="${t.id}" ${m.training_id === t.id ? "selected" : ""}>${escapeHTML(t.title)}</option>`).join("");
-  openModal(m.id ? "Ubah Materi" : "Tambah Materi", `
+  const editing = !!m.id;
+  openModal(editing ? "Ubah Materi" : "Tambah Materi", `
     <form id="f">
       ${m.id ? `<input type="hidden" name="id" value="${m.id}">` : ""}
-      <div class="field"><label class="label">Judul Materi</label><input class="input" name="title" required value="${escapeHTML(m.title)}"></div>
-      <div class="field"><label class="label">Deskripsi</label><textarea class="input" name="description" rows="3">${escapeHTML(m.description)}</textarea></div>
-      <div class="field"><label class="label">Training Terkait</label><select class="input" name="training_id"><option value="">— Tidak terkait —</option>${opts}</select></div>
-      <div class="field">
-        <label class="label">File Materi</label>
-        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-          <label class="btn btn-secondary btn-sm" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px">
-            ${icon("upload",14)} Unggah ke Drive
+
+      <div class="tr-modal-grid">
+        <!-- Kolom kiri: info materi -->
+        <div class="tr-modal-col">
+          <div class="tr-section-label">${icon("book",13)} Info Materi</div>
+          <div class="tr-field">
+            <label class="tr-label">Judul Materi <span style="color:#EF4444">*</span></label>
+            <input class="input tr-input" name="title" required value="${escapeHTML(m.title || "")}" placeholder="Judul materi...">
+          </div>
+          <div class="tr-field" style="margin-top:10px">
+            <label class="tr-label">Deskripsi</label>
+            <textarea class="input tr-input" name="description" rows="4" placeholder="Ringkasan isi materi...">${escapeHTML(m.description || "")}</textarea>
+          </div>
+
+          <div class="tr-divider"></div>
+          <div class="tr-section-label">${icon("calendar",13)} Training Terkait</div>
+          <div class="tr-field">
+            <select class="input tr-input" name="training_id">
+              <option value="">— Tidak terkait —</option>
+              ${opts}
+            </select>
+          </div>
+
+          <div class="tr-divider"></div>
+          <div class="tr-section-label">${icon("clock",13)} Jadwal Tampil</div>
+          <div class="tr-field">
+            <label class="tr-label">Mulai ditampilkan ke peserta</label>
+            <input class="input tr-input" name="visible_from" type="datetime-local" value="${toLocalDatetimeInput(m.visible_from)}">
+            <p style="font-size:11px;color:#94A3B8;margin-top:4px">Kosongkan agar langsung tersedia</p>
+          </div>
+        </div>
+
+        <!-- Kolom kanan: file -->
+        <div class="tr-modal-col">
+          <div class="tr-section-label">${icon("upload",13)} File Materi</div>
+
+          <label class="mat-upload-zone" for="matFileInput">
+            <div class="mat-upload-icon">${icon("upload",22)}</div>
+            <div class="mat-upload-text">Klik atau seret file ke sini</div>
+            <div class="mat-upload-sub">.pdf · .pptx · .docx · .mp4 · .zip</div>
             <input type="file" id="matFileInput" style="display:none" accept=".pdf,.pptx,.ppt,.docx,.doc,.mp4,.zip,.xlsx">
           </label>
-          <span id="matUploadLabel" style="font-size:13px;color:var(--ink-500)">atau tempel URL di bawah</span>
+          <div id="matUploadStatus" style="display:none;margin-top:8px;padding:8px 12px;background:#F0FDF4;border:1.5px solid #A7F3D0;border-radius:10px;font-size:12.5px;font-weight:600;color:#059669;display:flex;align-items:center;gap:6px"></div>
+
+          <div style="display:flex;align-items:center;gap:10px;margin:12px 0">
+            <div style="flex:1;height:1px;background:var(--border)"></div>
+            <span style="font-size:11px;color:#94A3B8;font-weight:600">ATAU</span>
+            <div style="flex:1;height:1px;background:var(--border)"></div>
+          </div>
+
+          <div class="tr-field">
+            <label class="tr-label">Tempel URL Google Drive / YouTube</label>
+            <input class="input tr-input" name="file_url" id="matFileUrl" type="url" value="${escapeHTML(m.file_url || "")}" placeholder="https://drive.google.com/file/d/...">
+            <p style="font-size:11px;color:#94A3B8;margin-top:4px">File yang diunggah otomatis masuk ke <strong>ILP Academy 2026 › Materi</strong></p>
+          </div>
+
+          ${m.file_url ? `
+          <div style="margin-top:12px;padding:10px 12px;background:#EFF6FF;border:1.5px solid #BFDBFE;border-radius:10px;display:flex;align-items:center;gap:8px">
+            ${icon("file",14)}
+            <a href="${escapeHTML(m.file_url)}" target="_blank" style="font-size:12px;font-weight:600;color:var(--primary);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">File terlampir — klik untuk preview</a>
+          </div>` : ""}
         </div>
-        <input class="input" name="file_url" id="matFileUrl" type="url" value="${escapeHTML(m.file_url)}" placeholder="https://drive.google.com/file/d/...">
-        <p style="font-size:12px;color:#94A3B8;margin-top:6px">File akan otomatis tersimpan di folder <strong>ILP Academy 2026 › Materi</strong> di Google Drive.</p>
       </div>
-      <div class="field" style="background:#F8FAFC;border:1px solid #E8EEF6;border-radius:12px;padding:14px">
-        <label class="label" style="color:#215AA9">${icon("calendar",14)} Jadwalkan Mulai Ditampilkan ke Peserta</label>
-        <input class="input" name="visible_from" type="datetime-local" value="${toLocalDatetimeInput(m.visible_from)}">
-        <p style="font-size:12px;color:#94A3B8;margin-top:6px">Biarkan kosong agar konten langsung tersedia. Isi tanggal &amp; waktu untuk mengatur jadwal tampil otomatis.</p>
-      </div>
-      <div id="msg"></div>
-      <button class="btn btn-primary" style="width:100%" type="submit">Simpan</button>
-    </form>`);
+
+      <div id="msg" style="margin-top:4px"></div>
+      <button class="btn btn-primary tr-submit" type="submit">${editing ? icon("check",15)+" Simpan Perubahan" : icon("plus",15)+" Tambah Materi"}</button>
+    </form>`, { wide: true });
   bindCrudForm("materials", renderAdminMateri, (fd) => {
     if (fd.visible_from) fd.visible_from = new Date(fd.visible_from).toISOString();
     return fd;
@@ -3516,22 +4084,22 @@ function materiModal(m) {
     matFileInput.addEventListener("change", async () => {
       const file = matFileInput.files[0];
       if (!file) return;
-      const label = document.getElementById("matUploadLabel");
+      const statusEl = document.getElementById("matUploadStatus");
       const urlInput = document.getElementById("matFileUrl");
-      label.textContent = "Mengunggah…";
-      label.style.color = "var(--primary)";
+      statusEl.style.display = "flex";
+      statusEl.innerHTML = `<span class="spinner" style="width:13px;height:13px;border-width:2px"></span> Mengunggah ${escapeHTML(file.name)}…`;
+      statusEl.style.background = "#EFF6FF"; statusEl.style.borderColor = "#BFDBFE"; statusEl.style.color = "var(--primary)";
       try {
         const folders = await _driveSetup();
-        const folderPath = folders?.materi?.id ? null : ["ILP Academy 2026", "Materi"];
         const folderId = folders?.materi?.id || null;
-        const result = await _driveUpload(file, file.name, folderPath, folderId);
+        const result = await _driveUpload(file, file.name, null, folderId);
         urlInput.value = result.webViewLink;
-        label.textContent = "✓ " + result.fileName;
-        label.style.color = "var(--ok)";
+        statusEl.innerHTML = `${icon("check",13)} ${escapeHTML(result.fileName)} — terunggah`;
+        statusEl.style.background = "#F0FDF4"; statusEl.style.borderColor = "#A7F3D0"; statusEl.style.color = "#059669";
         toast("File terunggah ke Drive › ILP Academy 2026 › Materi");
       } catch (e) {
-        label.textContent = "Gagal unggah";
-        label.style.color = "var(--bad)";
+        statusEl.innerHTML = `${icon("x",13)} Gagal: ${escapeHTML(e.message)}`;
+        statusEl.style.background = "#FEF2F2"; statusEl.style.borderColor = "#FECACA"; statusEl.style.color = "#DC2626";
         toast("Gagal: " + e.message, "error");
       }
     });
@@ -3704,179 +4272,82 @@ async function showTugasEditor(a) {
   const c = document.getElementById("content");
   _tugasEditorActive = true;
 
-  const [{ data: trainings }, masterForm] = await Promise.all([
+  const [{ data: trainings }, { data: allMasterForms }] = await Promise.all([
     qc("trainings:a", () => _supabase.from("trainings").select("*").order("training_date", { ascending: false })),
-    _getMasterForm(),
+    _supabase.from("forms").select("*").eq("is_master", true).eq("master_category", "tugas").maybeSingle(),
   ]);
+  const masterForm = allMasterForms;
   const opts = (trainings || []).map((t) =>
     `<option value="${t.id}" ${a.training_id === t.id ? "selected" : ""}>${escapeHTML(t.title)}</option>`).join("");
 
-  let formFields = Array.isArray(masterForm?.fields) && masterForm.fields.length
-    ? masterForm.fields
-    : [
-        { type: "text",     label: "Email",                   prefill: "email",       required: true, locked: true },
-        { type: "text",     label: "Nama Lengkap",            prefill: "full_name",   required: true, locked: true },
-        { type: "text",     label: "Institusi / Universitas", prefill: "institution", required: true, locked: true },
-        { type: "textarea", label: "Link / Jawaban Tugas",    required: true },
-      ];
-
-  function renderFormEditor() {
-    const prefillLabels = { email: "Email (dari profil)", full_name: "Nama Lengkap (dari profil)", institution: "Institusi / Universitas (dari profil)" };
-    return `<div id="formFieldsList" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
-      ${formFields.map((f, i) => `
-        <div class="card" style="padding:10px 14px;border:1px solid ${f.locked ? "#E0FAF1" : "#E2E8F0"};border-radius:10px;display:flex;align-items:center;gap:10px;background:${f.locked ? "#F0FDF9" : "#fff"}">
-          <span style="width:22px;height:22px;background:${f.locked ? "#6EE7B7" : "var(--primary-tint)"};border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:11px;font-weight:700;color:${f.locked ? "#059669" : "var(--primary)"}">${i+1}</span>
-          <div style="flex:1;min-width:0">
-            ${f.locked ? `
-              <div style="font-size:13px;font-weight:600;color:#374151">${escapeHTML(f.label)}</div>
-              <div style="font-size:11px;color:#6EE7B7;font-weight:500">Otomatis dari profil peserta · Tidak bisa dihapus</div>
-            ` : `
-              <div style="display:flex;gap:8px;align-items:center">
-                <input class="input" style="height:34px;font-size:13px;flex:1" data-field-label="${i}" value="${escapeHTML(f.label)}" placeholder="Label pertanyaan">
-                <select class="input" style="height:34px;font-size:12px;width:120px" data-field-type="${i}">
-                  <option value="text" ${f.type==="text"?"selected":""}>Teks singkat</option>
-                  <option value="textarea" ${f.type==="textarea"?"selected":""}>Paragraf</option>
-                  <option value="url" ${f.type==="url"?"selected":""}>URL / Link</option>
-                </select>
-              </div>
-              <div style="display:flex;align-items:center;gap:6px;margin-top:5px">
-                <label style="font-size:11px;color:#64748B;display:flex;align-items:center;gap:4px;cursor:pointer">
-                  <input type="checkbox" data-field-req="${i}" ${f.required?"checked":""} style="width:13px;height:13px"> Wajib diisi
-                </label>
-              </div>
-            `}
-          </div>
-          ${f.locked ? `<span style="font-size:11px;color:#10B981">${icon("lock",13)}</span>` : `<button class="btn-icon danger" data-field-del="${i}" title="Hapus">${icon("trash",14)}</button>`}
-        </div>`).join("")}
-    </div>
-    <button class="btn btn-secondary btn-sm" id="addFieldBtn" style="width:100%">${icon("plus",14)} Tambah Pertanyaan</button>
-    <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;padding:12px 14px;margin-top:12px">
-      <p style="font-size:12px;font-weight:700;color:#374151;margin-bottom:8px">${icon("upload",12)} Pengaturan Upload Dokumen</p>
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:8px">
-        <input type="checkbox" id="allowUploadToggle" ${(masterForm?.schema?.allowFileUpload !== false) ? "checked" : ""} style="width:15px;height:15px">
-        Izinkan peserta upload dokumen
-      </label>
-      <div style="display:flex;align-items:center;gap:8px">
-        <span style="font-size:12.5px;color:#64748B">Ukuran maks:</span>
-        <input type="number" id="maxFileSizeInput" class="input" value="${masterForm?.schema?.maxFileSizeMB || 5}" min="1" max="50" style="width:70px;height:32px;font-size:13px;text-align:center">
-        <span style="font-size:12.5px;color:#64748B">MB</span>
-      </div>
-    </div>
-    <div style="display:flex;gap:8px;margin-top:10px">
-      <button class="btn btn-ghost btn-sm" id="previewFormBtn">${icon("eye",13)} Preview</button>
-      <button class="btn btn-primary btn-sm" id="saveFormBtn" style="flex:1">${icon("check",13)} Simpan Perubahan Form</button>
-    </div>`;
-  }
-
   c.innerHTML = `
-    <button class="btn btn-ghost btn-sm" id="tugasBackBtn" style="margin-bottom:16px;gap:6px">${icon("arrow-left",15)} Kembali ke Daftar Tugas</button>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start">
-      <div>
-        <h2 style="font-size:20px;font-weight:800;color:var(--ink-900);margin-bottom:4px">${isEdit ? "Ubah Tugas" : "Tambah Tugas"}</h2>
-        <p style="font-size:13px;color:var(--ink-500);margin-bottom:20px">${isEdit ? "Perbarui detail tugas." : "Isi detail tugas baru."}</p>
-        <form id="tugasEditorForm" style="display:flex;flex-direction:column;gap:14px">
-          ${isEdit ? `<input type="hidden" name="id" value="${a.id}">` : ""}
-          <div class="field"><label class="label">Judul Tugas <span style="color:var(--bad)">*</span></label>
-            <input class="input" name="title" required value="${escapeHTML(a.title || "")}" placeholder="Contoh: Tugas 1 — Studi Kasus"></div>
-          <div class="field"><label class="label">Deskripsi / Instruksi</label>
-            <textarea class="input" name="description" rows="4" placeholder="Tuliskan instruksi pengerjaan tugas di sini...">${escapeHTML(a.description || "")}</textarea></div>
-          <div class="field"><label class="label">Training Terkait</label>
-            <select class="input" name="training_id"><option value="">— Tidak terkait —</option>${opts}</select></div>
-          <div class="field"><label class="label">Deadline</label>
-            <input class="input" name="deadline" type="datetime-local" value="${toLocalDatetimeInput(a.deadline)}"></div>
-          <div class="field" style="background:#F8FAFC;border:1px solid #E8EEF6;border-radius:12px;padding:14px">
-            <label class="label" style="color:#215AA9">${icon("calendar",14)} Jadwalkan Mulai Ditampilkan ke Peserta</label>
-            <input class="input" name="visible_from" type="datetime-local" value="${toLocalDatetimeInput(a.visible_from)}">
-            <p style="font-size:12px;color:#94A3B8;margin-top:6px">Biarkan kosong agar langsung tersedia.</p>
+    <div class="tugas-editor-wrap">
+      <div class="tugas-editor-head">
+        <button class="btn btn-ghost btn-sm" id="tugasBackBtn" style="gap:6px">${icon("arrow-left",15)} Kembali</button>
+        <div class="tugas-editor-head-title">
+          <div class="tugas-editor-icon">${icon("task",22)}</div>
+          <div>
+            <h2 style="font-size:18px;font-weight:800;color:var(--ink-900);margin:0">${isEdit ? "Ubah Tugas" : "Tambah Tugas"}</h2>
+            <p style="font-size:12.5px;color:var(--ink-500);margin:2px 0 0">${isEdit ? "Perbarui detail tugas yang sudah ada" : "Isi detail tugas baru untuk peserta"}</p>
           </div>
-          <div id="tugasEditorMsg"></div>
-          <div style="display:flex;gap:10px">
-            <button class="btn btn-ghost" type="button" id="tugasCancelBtn">Batal</button>
-            <button class="btn btn-primary" style="flex:1" type="submit" id="tugasSaveBtn">${isEdit ? icon("check",15)+" Simpan Perubahan" : icon("check",15)+" Simpan Tugas"}</button>
-          </div>
-        </form>
-      </div>
-      <div style="position:sticky;top:20px">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-          <h3 style="font-size:14px;font-weight:700;color:var(--ink-700);margin:0">${icon("task",15)} Form Pengumpulan</h3>
-          <span class="badge badge-success" style="font-size:10px">Berlaku untuk semua tugas</span>
-        </div>
-        <div class="card card-pad" style="padding:16px">
-          <p style="font-size:12px;color:var(--ink-500);margin-bottom:12px">Field bertanda hijau diisi otomatis dari profil peserta. Field lain diisi manual saat pengumpulan.</p>
-          <div id="formEditorWrap">${renderFormEditor()}</div>
         </div>
       </div>
+
+      <form id="tugasEditorForm" class="tugas-editor-body">
+        ${isEdit ? `<input type="hidden" name="id" value="${a.id}">` : ""}
+
+        <div class="tugas-editor-grid">
+          <div class="tugas-editor-col">
+            <div class="tr-section-label">${icon("presentation",13)} Informasi Tugas</div>
+            <div class="tr-field">
+              <label class="tr-label">Judul Tugas <span style="color:#EF4444">*</span></label>
+              <input class="input tr-input" name="title" required value="${escapeHTML(a.title || "")}" placeholder="Contoh: Tugas 1 — Studi Kasus">
+            </div>
+            <div class="tr-field" style="margin-top:10px">
+              <label class="tr-label">Deskripsi / Instruksi</label>
+              <textarea class="input tr-input" name="description" rows="5" placeholder="Tuliskan instruksi pengerjaan tugas di sini...">${escapeHTML(a.description || "")}</textarea>
+            </div>
+          </div>
+
+          <div class="tugas-editor-col">
+            <div class="tr-section-label">${icon("calendar",13)} Pengaturan</div>
+            <div class="tr-field">
+              <label class="tr-label">Training Terkait</label>
+              <select class="input tr-input" name="training_id">
+                <option value="">— Tidak terkait —</option>
+                ${opts}
+              </select>
+            </div>
+            <div class="tr-field" style="margin-top:10px">
+              <label class="tr-label">Deadline Pengumpulan</label>
+              <input class="input tr-input" name="deadline" type="datetime-local" value="${toLocalDatetimeInput(a.deadline)}">
+            </div>
+            <div class="tr-field" style="margin-top:10px">
+              <label class="tr-label">Mulai Ditampilkan ke Peserta</label>
+              <input class="input tr-input" name="visible_from" type="datetime-local" value="${toLocalDatetimeInput(a.visible_from)}">
+              <p style="font-size:11px;color:#94A3B8;margin-top:4px">Kosongkan agar langsung tersedia</p>
+            </div>
+
+            ${a.attachment_url ? `
+            <div class="tr-divider"></div>
+            <div class="tr-field">
+              <label class="tr-label">Lampiran</label>
+              <a href="${escapeHTML(a.attachment_url)}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--primary);text-decoration:none;padding:7px 12px;background:#EFF6FF;border-radius:8px;border:1px solid #BFDBFE">
+                ${icon("file",13)} Lihat Lampiran
+              </a>
+            </div>` : ""}
+          </div>
+        </div>
+
+        <div id="tugasEditorMsg" style="margin-top:4px"></div>
+        <div style="display:flex;gap:10px;margin-top:4px">
+          <button class="btn btn-ghost" type="button" id="tugasCancelBtn" style="min-width:100px">Batal</button>
+          <button class="btn btn-primary tr-submit" style="flex:1" type="submit" id="tugasSaveBtn">
+            ${isEdit ? icon("check",15)+" Simpan Perubahan" : icon("plus",15)+" Tambah Tugas"}
+          </button>
+        </div>
+      </form>
     </div>`;
-
-  function rebindFormEditor() {
-    document.getElementById("formEditorWrap").innerHTML = renderFormEditor();
-    bindFormEditorEvents();
-  }
-
-  function bindFormEditorEvents() {
-    document.querySelectorAll("[data-field-label]").forEach(inp => {
-      inp.addEventListener("input", () => { formFields[+inp.dataset.fieldLabel].label = inp.value; });
-    });
-    document.querySelectorAll("[data-field-type]").forEach(sel => {
-      sel.addEventListener("change", () => { formFields[+sel.dataset.fieldType].type = sel.value; });
-    });
-    document.querySelectorAll("[data-field-req]").forEach(cb => {
-      cb.addEventListener("change", () => { formFields[+cb.dataset.fieldReq].required = cb.checked; });
-    });
-    document.querySelectorAll("[data-field-del]").forEach(btn => {
-      btn.addEventListener("click", () => { formFields.splice(+btn.dataset.fieldDel, 1); rebindFormEditor(); });
-    });
-    document.getElementById("addFieldBtn")?.addEventListener("click", () => {
-      formFields.push({ type: "text", label: "Pertanyaan Baru", required: false });
-      rebindFormEditor();
-      // focus the new label input
-      const inputs = document.querySelectorAll("[data-field-label]");
-      if (inputs.length) inputs[inputs.length - 1].focus();
-    });
-    document.getElementById("saveFormBtn")?.addEventListener("click", async () => {
-      const btn = document.getElementById("saveFormBtn");
-      btn.disabled = true; btn.innerHTML = `<div class="spinner" style="width:14px;height:14px;border-width:2px;margin:0 auto"></div>`;
-      const formSettings = {
-        allowFileUpload: document.getElementById("allowUploadToggle")?.checked !== false,
-        maxFileSizeMB: parseInt(document.getElementById("maxFileSizeInput")?.value || "5", 10) || 5,
-      };
-      const { error } = masterForm?.id
-        ? await _supabase.from("forms").update({ fields: formFields, schema: formSettings }).eq("id", masterForm.id)
-        : await _supabase.from("forms").insert({ title: "Form Pengumpulan Tugas", type: "pengumpulan_master", is_active: true, fields: formFields, schema: formSettings });
-      _masterFormCache = null;
-      btn.disabled = false; btn.innerHTML = `${icon("check",13)} Simpan Perubahan Form`;
-      if (error) { toast("Gagal simpan form: " + error.message, "error"); return; }
-      toast("Form pengumpulan diperbarui!");
-    });
-    document.getElementById("previewFormBtn")?.addEventListener("click", () => {
-      const prefill = { email: "email@contoh.com", full_name: "Nama Peserta", institution: "Universitas Contoh" };
-      const rows = formFields.map((f, i) => {
-        const val = f.prefill ? (prefill[f.prefill] || "") : "";
-        const inputHtml = f.type === "textarea"
-          ? `<textarea class="gf-textarea-input" rows="3" readonly="${!!f.prefill}" placeholder="${escapeHTML(f.label)}">${escapeHTML(val)}</textarea>`
-          : `<input type="text" class="gf-text-input" value="${escapeHTML(val)}" ${f.prefill ? 'readonly style="background:#F0FDF9;color:#059669"' : `placeholder="${escapeHTML(f.label)}"`}>`;
-        return `<div class="gf-question">
-          <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:8px">
-            <span class="gf-q-num">${i+1}</span>
-            <span class="gf-q-title">${escapeHTML(f.label)}${f.required ? ' <span style="color:var(--bad)">*</span>' : ""}${f.prefill ? ` <span style="font-size:10px;color:#10B981;font-weight:500">(dari profil)</span>` : ""}</span>
-          </div>
-          ${inputHtml}
-        </div>`;
-      }).join("");
-      openModal("Preview Form Pengumpulan", `<form class="gf-page" style="gap:12px">
-        <div class="gf-header-card" style="padding:20px 24px">
-          <div class="gf-htype">${icon("upload",13)} Pengumpulan Tugas</div>
-          <h2 style="font-size:17px">Form Pengumpulan Tugas ILP Academy</h2>
-        </div>
-        ${rows}
-        <div class="gf-submit-area" style="padding:14px 18px">
-          <span style="font-size:12.5px;color:var(--ink-400);font-style:italic;flex:1">Mode pratinjau — respons tidak dikirim</span>
-          <button type="button" class="gf-cancel-btn" data-close>Tutup</button>
-        </div>
-      </form>`, { wide: true });
-    });
-  }
-  bindFormEditorEvents();
 
   document.getElementById("tugasBackBtn").addEventListener("click", () => { _tugasEditorActive = false; renderAdminTugas(); });
   document.getElementById("tugasCancelBtn").addEventListener("click", () => { _tugasEditorActive = false; renderAdminTugas(); });
@@ -4483,9 +4954,19 @@ function bindCrudForm(table, rerender, transform) {
     new FormData(form).forEach((v, k) => (fd[k] = v === "" ? null : v));
     if (transform) fd = transform(fd);
     const id = fd.id; delete fd.id;
-    const res = id
+    let res = id
       ? await _supabase.from(table).update(fd).eq("id", id)
       : await _supabase.from(table).insert(fd);
+    // If schema cache doesn't know a column yet, retry without that column
+    if (res.error && res.error.message && res.error.message.includes("schema cache")) {
+      const badCol = (res.error.message.match(/'([^']+)' column/) || [])[1];
+      if (badCol && fd[badCol] !== undefined) {
+        delete fd[badCol];
+        res = id
+          ? await _supabase.from(table).update(fd).eq("id", id)
+          : await _supabase.from(table).insert(fd);
+      }
+    }
     if (res.error) {
       document.getElementById("msg").innerHTML = `<div class="alert alert-error">${escapeHTML(res.error.message)}</div>`;
       btn.disabled = false; btn.textContent = "Simpan";
@@ -4702,12 +5183,7 @@ PAGES.profile = async function () {
   const user = await getCurrentUser();
   const avColor = avatarColor(profile.full_name || profile.email);
 
-  c.innerHTML = (profile.must_change_password && !isAdmin ? `
-    <div style="background:#FFF7ED;border:1px solid #FED7AA;border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:12px;margin-bottom:14px;font-size:13px;color:#92400E;font-weight:600">
-      ${icon("alert-triangle",18)}
-      <div><strong>Wajib Ganti Password</strong> — Anda menggunakan password sementara. Silakan ganti password di tab Keamanan sebelum menggunakan aplikasi.</div>
-    </div>` : "") +
-  pageHead("Profil Saya", "Kelola informasi akun, keamanan, dan lihat aktivitas Anda.") + `
+  c.innerHTML = pageHead("Profil Saya", "Kelola informasi akun, keamanan, dan lihat aktivitas Anda.") + `
     <div class="profile-grid">
       <div class="profile-card">
         <div class="profile-avatar-lg" style="background:${avColor}">${escapeHTML(initials(profile.full_name || profile.email))}</div>
@@ -4826,14 +5302,7 @@ PAGES.profile = async function () {
       else renderActivity();
     });
   });
-  // Auto-switch to security tab if must change password
-  if (profile.must_change_password && !isAdmin) {
-    const secTab = c.querySelector('[data-ptab="security"]');
-    if (secTab) { c.querySelectorAll(".profile-tab").forEach(t => t.classList.remove("active")); secTab.classList.add("active"); }
-    renderSecurity();
-  } else {
-    renderInfo();
-  }
+  renderInfo();
 };
 
 /* =====================================================================
@@ -5053,10 +5522,13 @@ PAGES.adminAnalytics = async function () {
 const FB_TYPES = [
   { v: "text",     label: "Teks Singkat", icon: "type",         hasOpts: false },
   { v: "textarea", label: "Paragraf",     icon: "file-text",    hasOpts: false },
+  { v: "number",   label: "Angka",        icon: "hash",         hasOpts: false },
   { v: "radio",    label: "Pilihan Ganda",icon: "radio-icon",   hasOpts: true  },
-  { v: "checkbox", label: "Kotak Centang",icon: "check-square",  hasOpts: true  },
+  { v: "checkbox", label: "Kotak Centang",icon: "check-square", hasOpts: true  },
   { v: "select",   label: "Dropdown",     icon: "list",         hasOpts: true  },
-  { v: "rating",   label: "Rating 1–5",   icon: "star",         hasOpts: false },
+  { v: "rating",   label: "Skala Linear", icon: "star",         hasOpts: false },
+  { v: "date",     label: "Tanggal",      icon: "calendar",     hasOpts: false },
+  { v: "time",     label: "Waktu",        icon: "clock",        hasOpts: false },
   { v: "file",     label: "Link File",    icon: "file",         hasOpts: false },
 ];
 function _fbDeriveEmbed(url) {
@@ -5161,6 +5633,117 @@ async function _getFormSchema(formId) {
   return json; // { formId, title, description, items: [{questionId, title, type, options, required}] }
 }
 
+/* =====================================================================
+   MASTER FORMS — constants + helpers
+   ===================================================================== */
+const MASTER_FORM_CATS = [
+  { key: "presensi",       label: "Presensi",  icon: "user-check",      color: "#059669", bg: "#ECFDF5" },
+  { key: "pretest",        label: "Pretest",   icon: "clipboard",       color: "#215AA9", bg: "#EFF6FF" },
+  { key: "posttest",       label: "Post Test", icon: "clipboard-check", color: "#7C3AED", bg: "#F5F3FF" },
+  { key: "tugas",          label: "Tugas",     icon: "upload",          color: "#D97706", bg: "#FEF3C7" },
+  { key: "laporan_mandiri", label: "Pengganti", icon: "file-text",      color: "#0891B2", bg: "#ECFEFF" },
+];
+
+function _masterFormFields(category) {
+  const profile = [
+    { type: "text", label: "Nama Lengkap",  required: true },
+    { type: "text", label: "ID Peserta",    required: true },
+    { type: "text", label: "Email",         required: true },
+    { type: "text", label: "Institusi",     required: true },
+    { type: "text", label: "Sesi Training", required: true },
+  ];
+  const extra = {
+    presensi:       [{ type: "radio",    label: "Konfirmasi Kehadiran",      required: true, options: ["Hadir", "Tidak Hadir"] }],
+    pretest:        [],
+    posttest:       [],
+    tugas:          [{ type: "textarea", label: "Link / Jawaban Tugas",      required: true }],
+    laporan_mandiri: [
+      { type: "textarea", label: "Alasan Ketidakhadiran",                    required: true },
+      { type: "textarea", label: "Ringkasan Materi yang Dipelajari Mandiri", required: true },
+      { type: "textarea", label: "Refleksi & Rencana Penerapan",             required: true },
+      { type: "file",     label: "Bukti Belajar Mandiri (Link)",             required: true },
+      { type: "rating",   label: "Tingkat Pemahaman Materi",                 required: true, ratingLow: 1, ratingHigh: 5, ratingLowLabel: "Belum Paham", ratingHighLabel: "Sangat Paham" },
+    ],
+  };
+  return [...profile, ...(extra[category] || [])];
+}
+
+function _masterFormUrl(form, profile, training) {
+  if (!form?.gform_url) return null;
+  const parts = ["usp=pp_url"];
+  // Google Forms API returns questionId as hex (e.g. "1e644aad"); prefill URLs need decimal.
+  // Convert if all hex chars, otherwise pass through (already decimal from HTML parsing).
+  const toEntryId = (hex) => {
+    if (!hex) return null;
+    return /^[0-9a-f]+$/i.test(hex) && !/^\d+$/.test(hex)
+      ? parseInt(hex, 16).toString()
+      : hex;
+  };
+  const add = (entry, val) => {
+    const eid = toEntryId(entry);
+    if (eid && val) parts.push(`entry.${eid}=${encodeURIComponent(String(val))}`);
+  };
+  add(form.entry_nama,        profile?.full_name   || "");
+  add(form.entry_id_peserta,  profile?.id          || "");
+  add(form.entry_email,       profile?.email       || "");
+  add(form.entry_institusi,   profile?.institution || "");
+  if (form.entry_training && training) {
+    const label = training.week_number ? `Sesi ${training.week_number} — ${training.title}` : training.title;
+    add(form.entry_training, label);
+  }
+  return form.gform_url + "?" + parts.join("&");
+}
+
+async function _initMasterForm(category) {
+  const cat = MASTER_FORM_CATS.find((c) => c.key === category);
+  if (!cat) throw new Error("Kategori tidak dikenal: " + category);
+  const fields = _masterFormFields(category);
+  const folders = await _driveSetup();
+  const r = await _createGoogleForm({
+    title: `[Master] ${cat.label} — ILP Academy 2026`,
+    description: `Form master ${cat.label} yang digunakan untuk semua sesi training. Data profil peserta terisi otomatis.`,
+    fields,
+    folderId: folders?.forms?.id || null,
+  });
+  // Prefer entryIdMap (numeric HTML entry IDs) over questionIds (API UUIDs) for prefill
+  console.log("[MasterForm] create response:", JSON.stringify({ entryIdMap: r.entryIdMap, questionIds: r.questionIds }));
+  const eIds = (r.entryIdMap && Object.keys(r.entryIdMap).length) ? r.entryIdMap : (r.questionIds || {});
+  // Embed entryId into each field so submission can map label → entry ID later
+  const fieldsWithEntryIds = fields.map(f => ({ ...f, entryId: eIds[f.label] || null }));
+  const typeMap = { presensi: "attendance", pretest: "pretest", posttest: "posttest", tugas: "custom" };
+  const record = {
+    title: `[Master] ${cat.label}`,
+    description: `Form master ${cat.label} untuk semua sesi training ILP Academy 2026.`,
+    type: typeMap[category] || "custom",
+    mode: "gform",
+    is_active: true,
+    is_master: true,
+    master_category: category,
+    gsheet_id: r.formId,
+    gform_url: r.publishedUrl,
+    gform_edit_url: r.editUrl,
+    fields: fieldsWithEntryIds,
+    entry_nama:        eIds["Nama Lengkap"]  || null,
+    entry_id_peserta:  eIds["ID Peserta"]    || null,
+    entry_email:       eIds["Email"]         || null,
+    entry_institusi:   eIds["Institusi"]     || null,
+    entry_training:    eIds["Sesi Training"] || null,
+  };
+  const { data, error } = await _supabase.from("forms").insert(record).select().single();
+  if (error) throw new Error(error.message);
+  qcInvalidate("masterForms");
+  return data;
+}
+
+async function _fetchMasterForms() {
+  const hit = _qc.get("masterForms");
+  if (hit && Date.now() - hit.t < 120_000) return hit.v;
+  const { data } = await _supabase.from("forms").select("*").eq("is_master", true);
+  const v = data || [];
+  _qc.set("masterForms", { v, t: Date.now() });
+  return v;
+}
+
 async function _submitFormResponse(formId, answers) {
   const res = await fetch(_edgeFnUrl("google-form-submit"), {
     method: "POST",
@@ -5182,7 +5765,8 @@ PAGES.adminForms = async function () {
   async function showList() {
     c.innerHTML = pageHead("Form Builder", "Buat formulir internal atau Google Form otomatis untuk pretest, posttest, survei, dan presensi.",
       `<button class="btn btn-primary" id="newFormBtn">${icon("plus", 16)} Buat Form</button>`) +
-      `<div id="formsList"><div class="loader" style="min-height:160px"><div class="spinner"></div>Memuat form...</div></div>`;
+      `<div id="masterFormsSection"></div>
+       <div id="formsList"><div class="loader" style="min-height:160px"><div class="spinner"></div>Memuat form...</div></div>`;
 
     document.getElementById("newFormBtn").addEventListener("click", () => showEditor(null));
 
@@ -5192,14 +5776,11 @@ PAGES.adminForms = async function () {
       _supabase.from("assignments").select("*").order("created_at", { ascending: false }),
     ]);
     const tName = {}; (trainings || []).forEach((t) => (tName[t.id] = t));
-    // Map gsheet_id → assignment (for auto-generated forms)
     const asgByForm = {}; (assignments || []).forEach((a) => { if (a.gsheet_id) asgByForm[a.gsheet_id] = a.title; });
-    // Merge orphan tugas forms (have gsheet_id or form_url but not yet in forms table)
     const formsGsheetIds = new Set((forms || []).map(f => f.gsheet_id).filter(Boolean));
     const _validFormId = (a) => {
       if (a.gsheet_id) return a.gsheet_id;
       if (!a.form_url) return null;
-      // Extract only non-"e" form IDs (avoid /forms/d/e/... published URLs)
       const m = a.form_url.match(/\/forms\/d\/([^/e][^/?#]*)/);
       return m ? m[1] : null;
     };
@@ -5209,14 +5790,105 @@ PAGES.adminForms = async function () {
         const fid = _validFormId(a);
         return { id: `asg:${a.id}`, _asgId: a.id, title: `Pengumpulan: ${a.title}`, description: a.description || "", type: "custom", is_active: true, gsheet_id: fid, fields: [], training_id: a.training_id, created_at: null };
       });
-    const allForms = [...(forms || []), ...orphanForms];
 
+    // Separate master forms from regular forms
+    const masterByCategory = {};
+    (forms || []).filter(f => f.is_master).forEach(f => { masterByCategory[f.master_category] = f; });
+    const regularForms = [...(forms || []).filter(f => !f.is_master), ...orphanForms];
+
+    /* --- Render Master Forms section --- */
+    const mfsEl = document.getElementById("masterFormsSection");
+    mfsEl.innerHTML = `
+      <div style="margin-bottom:8px">
+        <h2 style="font-size:14px;font-weight:700;color:var(--ink-500);letter-spacing:.5px;text-transform:uppercase;margin-bottom:4px">Form Master</h2>
+        <p style="font-size:12.5px;color:var(--ink-400);margin-bottom:12px">Satu form digunakan untuk semua sesi training. Kolom profil peserta (Nama, ID, Email, Institusi) dan Sesi Training terisi otomatis saat dibuka dari halaman Training.</p>
+      </div>
+      <div class="grid grid-4" style="gap:10px;margin-bottom:28px">${MASTER_FORM_CATS.map((cat) => {
+        const mf = masterByCategory[cat.key];
+        const fieldsN = mf && Array.isArray(mf.fields) ? mf.fields.length : 0;
+        return `<div class="card card-pad" style="display:flex;flex-direction:column;gap:10px;border:2px solid ${mf ? cat.color + "33" : "#E2E8F0"}">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start">
+            <span class="kpi-ico" style="width:42px;height:42px;border-radius:11px;background:${cat.bg};color:${cat.color}">${icon(cat.icon, 20)}</span>
+            ${mf ? `<span class="badge" style="background:${cat.bg};color:${cat.color};font-size:11px">${icon("check",11)} Aktif</span>` : `<span class="badge" style="font-size:11px">Belum dibuat</span>`}
+          </div>
+          <div>
+            <h3 style="font-size:15px;font-weight:700;color:var(--ink-900)">${escapeHTML(cat.label)}</h3>
+            <p style="font-size:12px;color:var(--ink-500);margin-top:3px">4 kolom profil + Sesi Training ${fieldsN > 5 ? `+ ${fieldsN - 5} pertanyaan` : ""}</p>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            <span class="badge" style="background:#F1F5F9;color:#475569">${icon("user",11)} Auto-prefill</span>
+            ${mf?.gsheet_id ? `<span class="badge" style="background:#E0FAF1;color:#059669">${icon("check",11)} Google Form</span>` : ""}
+          </div>
+          <div style="display:flex;gap:6px;margin-top:auto;padding-top:10px;border-top:1px solid var(--border);flex-wrap:wrap">
+            ${mf ? `
+              <button class="btn btn-sm" data-medit="${mf.id}"
+                style="background:#EFF6FF;color:#215AA9;border:1.5px solid #BFDBFE;font-weight:600;display:inline-flex;align-items:center;gap:5px;flex:1;justify-content:center">
+                ${icon("edit",13)} Edit Form
+              </button>
+              <button class="btn btn-sm" data-mresp="${mf.id}"
+                style="background:#F0FDF4;color:#059669;border:1.5px solid #A7F3D0;font-weight:600;display:inline-flex;align-items:center;gap:5px;flex:1;justify-content:center">
+                ${icon("chart",13)} Respons
+              </button>
+              <button class="btn btn-sm" data-mdel="${mf.id}"
+                style="background:#FEF2F2;color:#DC2626;border:1.5px solid #FECACA;font-weight:600;width:34px;padding:0;justify-content:center;display:inline-flex;align-items:center"
+                title="Hapus Form Master">
+                ${icon("trash",13)}
+              </button>
+            ` : `<button class="btn btn-primary btn-sm" data-minit="${cat.key}" style="width:100%;justify-content:center">${icon("plus",14)} Buat Form Master</button>`}
+          </div>
+        </div>`;
+      }).join("")}</div>`;
+
+    mfsEl.querySelectorAll("[data-minit]").forEach((b) => b.addEventListener("click", async () => {
+      const cat = MASTER_FORM_CATS.find(c => c.key === b.dataset.minit);
+      const ok = await confirmDialog({ title: `Buat Form Master ${cat?.label}?`, message: `Akan membuat Google Form master untuk <strong>${cat?.label}</strong> dengan kolom:<br><br>• Nama Lengkap, ID Peserta, Email, Institusi<br>• Sesi Training (auto-prefill)<br>${cat?.key === "tugas" ? "• Link / Jawaban Tugas" : cat?.key === "presensi" ? "• Konfirmasi Kehadiran" : ""}<br><br>Form ini digunakan untuk SEMUA sesi training dan akan terisi otomatis saat peserta membuka dari halaman Training.`, confirmText: "Buat Sekarang" });
+      if (!ok) return;
+      b.disabled = true; b.innerHTML = `<span class="spinner" style="width:13px;height:13px;border-width:2px"></span> Membuat...`;
+      try {
+        await _initMasterForm(b.dataset.minit);
+        toast(`Form Master ${cat?.label} berhasil dibuat!`);
+        showList();
+      } catch (e) {
+        toast("Gagal: " + (e.message || String(e)), "error");
+        b.disabled = false; b.innerHTML = `${icon("plus",14)} Buat Form Master`;
+      }
+    }));
+    mfsEl.querySelectorAll("[data-medit]").forEach((b) => b.addEventListener("click", () => {
+      const mf = (forms || []).find(f => f.id === b.dataset.medit);
+      if (mf) showEditor(mf);
+    }));
+    mfsEl.querySelectorAll("[data-mresp]").forEach((b) => b.addEventListener("click", () => {
+      const mf = (forms || []).find(f => f.id === b.dataset.mresp);
+      if (mf) showResponses(mf);
+    }));
+    mfsEl.querySelectorAll("[data-mdel]").forEach((b) => b.addEventListener("click", async () => {
+      const mf = (forms || []).find(f => f.id === b.dataset.mdel);
+      if (!mf) return;
+      const ok = await confirmDialog({ title: "Hapus Form Master?", message: `Form master <strong>${escapeHTML(mf.title)}</strong> akan dihapus dari database (Google Form-nya tetap ada di Google Drive). Tombol form di halaman Training tidak akan berfungsi sampai form master baru dibuat.`, confirmText: "Ya, Hapus", danger: true });
+      if (!ok) return;
+      await _supabase.from("forms").delete().eq("id", mf.id);
+      qcInvalidate("masterForms");
+      toast("Form master dihapus.");
+      showList();
+    }));
+
+    // Auto-open form editor if navigated here from admin training card
+    const pendingFormId = sessionStorage.getItem("openFormEditor");
+    if (pendingFormId) {
+      sessionStorage.removeItem("openFormEditor");
+      const mf = (forms || []).find(f => f.id === pendingFormId);
+      if (mf) { showEditor(mf); return; }
+    }
+
+    /* --- Render regular forms --- */
     const list = document.getElementById("formsList");
-    if (!allForms.length) {
-      list.innerHTML = `<div class="card card-pad empty" style="padding:48px 24px">${icon("clipboard", 30)}<p style="margin-top:10px;font-weight:600;color:var(--ink-700)">Belum ada form.</p><p style="font-size:13px;color:var(--ink-500)">Klik "Buat Form" untuk membuat formulir pertama Anda.</p></div>`;
+    if (!regularForms.length) {
+      list.innerHTML = `<div style="font-size:13px;color:var(--ink-400);padding:8px 0">Belum ada form tambahan.</div>`;
       return;
     }
-    list.innerHTML = `<div class="grid grid-3" style="gap:10px">${allForms.map((f) => {
+    list.innerHTML = `
+      <h2 style="font-size:14px;font-weight:700;color:var(--ink-500);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">Form Lainnya</h2>
+      <div class="grid grid-3" style="gap:10px">${regularForms.map((f) => {
       const t = tName[f.training_id];
       const typeLabel = { pretest: "Pretest", posttest: "Posttest", survey: "Survei", attendance: "Presensi", custom: "Umum" }[f.type] || "Umum";
       const fieldsN = Array.isArray(f.fields) ? f.fields.length : 0;
@@ -5255,11 +5927,11 @@ PAGES.adminForms = async function () {
       await _supabase.from("forms").update({ is_active: t.checked }).eq("id", t.dataset.toggle);
       toast(t.checked ? "Form diaktifkan." : "Form dinonaktifkan.");
     }));
-    list.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => showEditor(allForms.find((f) => f.id === b.dataset.edit))));
-    list.querySelectorAll("[data-preview]").forEach((b) => b.addEventListener("click", () => openPreviewModal(allForms.find((f) => f.id === b.dataset.preview))));
-    list.querySelectorAll("[data-resp]").forEach((b) => b.addEventListener("click", () => showResponses(allForms.find((f) => f.id === b.dataset.resp))));
+    list.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => showEditor(regularForms.find((f) => f.id === b.dataset.edit))));
+    list.querySelectorAll("[data-preview]").forEach((b) => b.addEventListener("click", () => openPreviewModal(regularForms.find((f) => f.id === b.dataset.preview))));
+    list.querySelectorAll("[data-resp]").forEach((b) => b.addEventListener("click", () => showResponses(regularForms.find((f) => f.id === b.dataset.resp))));
     list.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", async () => {
-      const f = allForms.find((x) => x.id === b.dataset.del);
+      const f = regularForms.find((x) => x.id === b.dataset.del);
       const ok = await confirmDialog({ title: "Hapus Form?", message: `Form "${escapeHTML(f.title)}" beserta seluruh responsnya akan dihapus.`, confirmText: "Ya, Hapus", danger: true });
       if (!ok) return;
       await _supabase.from("forms").delete().eq("id", f.id);
@@ -5302,7 +5974,6 @@ PAGES.adminForms = async function () {
     const tOptions = `<option value="">— Tidak terkait sesi —</option>` + (trainings || []).map((t) =>
       `<option value="${t.id}" ${editing && form.training_id === t.id ? "selected" : ""}>Sesi ${t.week_number || ""} — ${escapeHTML(t.title)}</option>`).join("");
 
-
     c.innerHTML = `
       <div class="page-head with-back" style="margin-bottom:10px">
         <button class="btn btn-ghost btn-sm" id="backBtn">${icon("arrow-left", 16)} Kembali</button>
@@ -5322,35 +5993,26 @@ PAGES.adminForms = async function () {
             <div class="field" style="margin-bottom:0"><label class="label">Terkait Sesi <span class="opt">(opsional)</span></label><select class="input" id="fTraining">${tOptions}</select></div>
           </div>
 
-          <div class="card card-pad editor-card">
-            <div class="gconn ok">
-              <span class="gconn-ico">${icon("check", 16)}</span>
-              <div style="flex:1;min-width:0">
-                <div class="gconn-title">Google Forms API</div>
-                <div class="gconn-sub">Form dibuat otomatis via Supabase Edge Function + Service Account</div>
-              </div>
-            </div>
-          </div>
-
-          ${editing ? `<div class="card card-pad editor-card">
-            <label class="label" style="margin-bottom:8px">Google Form Tertaut</label>
+          ${editing && form.gsheet_id ? `<div class="card card-pad editor-card">
+            <label class="label" style="margin-bottom:8px">Aksi</label>
             <div style="display:flex;flex-wrap:wrap;gap:8px">
-              ${form.gsheet_id ? `<button class="btn btn-secondary btn-sm" id="editorPreviewBtn">${icon("eye", 14)} Preview Form</button>` : ""}
-              ${form.gform_edit_url ? `<a class="btn btn-ghost btn-sm" href="${escapeHTML(form.gform_edit_url)}" target="_blank">${icon("edit", 14)} Edit di Google</a>` : ""}
+              <button class="btn btn-secondary btn-sm" id="editorPreviewBtn">${icon("eye", 14)} Preview</button>
+              <button class="btn btn-secondary btn-sm" id="editorRespBtn">${icon("chart", 14)} Lihat Respons</button>
             </div>
-            <p class="form-hint" style="margin-top:8px">Pertanyaan diubah langsung di Google Form. Di sini Anda dapat memperbarui judul, deskripsi, dan sesi.</p>
+            <p class="form-hint" style="margin-top:8px;color:var(--ink-400)">Perubahan pertanyaan disimpan di aplikasi. Jika perlu sync ke Google Form, gunakan tombol Preview untuk verifikasi.</p>
           </div>` : ""}
         </div>
 
         <div class="form-editor-right">
           <div class="card card-pad editor-card" id="questionsCard">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-              <label class="label" style="margin:0;font-size:14px;font-weight:700">Pertanyaan ${editing ? "<span class='opt'>(hanya metadata — ubah di Google Form)</span>" : ""}</label>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+              <label class="label" style="margin:0;font-size:14px;font-weight:700">Pertanyaan</label>
+              <span style="font-size:12px;color:var(--ink-400)">${fields.length} pertanyaan</span>
             </div>
-            <div id="fbFields" style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px"></div>
-            ${!editing ? `<div style="display:flex;flex-wrap:wrap;gap:8px">
+            <div id="fbFields" style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px"></div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px" id="fbAddBtns">
               ${FB_TYPES.map((t) => `<button type="button" class="fb-add-btn" data-add="${t.v}">${icon(t.icon, 14)} ${t.label}</button>`).join("")}
-            </div>` : ""}
+            </div>
           </div>
         </div>
 
@@ -5363,49 +6025,101 @@ PAGES.adminForms = async function () {
 
     document.getElementById("backBtn").addEventListener("click", showList);
     document.getElementById("cancelBtn").addEventListener("click", showList);
-    const epBtn = document.getElementById("editorPreviewBtn");
-    if (epBtn) epBtn.addEventListener("click", () => openPreviewModal(form));
+    if (editing && form.gsheet_id) {
+      document.getElementById("editorPreviewBtn")?.addEventListener("click", () => openPreviewModal(form));
+      document.getElementById("editorRespBtn")?.addEventListener("click", () => showResponses(form));
+    }
 
     const saveBtn = document.getElementById("saveBtn");
-
 
     /* --- Field builder --- */
     const fieldsBox = document.getElementById("fbFields");
     const drawFields = () => {
+      // Update count badge
+      const badge = document.querySelector("#questionsCard label + span");
+      if (badge) badge.textContent = `${fields.length} pertanyaan`;
+
       if (!fields.length) {
-        fieldsBox.innerHTML = `<div class="empty" style="border:1.5px dashed var(--border);border-radius:12px;padding:20px;font-size:13px;color:var(--ink-400)">${icon("plus",18)}<p style="margin-top:6px">Belum ada pertanyaan. Tambahkan dari tombol di bawah.</p></div>`;
+        fieldsBox.innerHTML = `<div class="empty" style="border:1.5px dashed var(--border);border-radius:12px;padding:24px;font-size:13px;color:var(--ink-400);text-align:center">${icon("plus",20)}<p style="margin-top:6px">Belum ada pertanyaan. Tambahkan dari tombol di bawah.</p></div>`;
         return;
       }
       fieldsBox.innerHTML = fields.map((fld, i) => {
         const meta = FB_TYPES.find((t) => t.v === fld.type) || FB_TYPES[0];
-        return `<div class="fb-field" data-i="${i}">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-            <span style="display:inline-flex;color:var(--primary)">${icon(meta.icon, 16)}</span>
-            <span style="font-size:12px;font-weight:700;color:var(--ink-500);text-transform:uppercase;letter-spacing:.04em">${meta.label}</span>
+        const typeSelector = FB_TYPES.map((t) =>
+          `<option value="${t.v}" ${fld.type === t.v ? "selected" : ""}>${t.label}</option>`).join("");
+        return `<div class="fb-field" data-i="${i}" style="border:1px solid #E2E8F0;border-radius:12px;padding:14px 16px;background:#fff">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+            <span style="font-size:11px;font-weight:700;color:var(--ink-400);background:var(--bg-2);border-radius:6px;padding:2px 8px">${i + 1}</span>
+            <select class="input" data-type="${i}" style="flex:1;max-width:180px;font-size:12px;padding:4px 8px;height:30px">
+              ${typeSelector}
+            </select>
             <div style="margin-left:auto;display:flex;gap:4px">
-              <button type="button" class="btn-icon" data-up="${i}">${icon("chevron-up", 14)}</button>
-              <button type="button" class="btn-icon" data-down="${i}">${icon("chevron-down", 14)}</button>
-              <button type="button" class="btn-icon" data-rm="${i}" style="color:var(--bad)">${icon("trash", 14)}</button>
+              <button type="button" class="btn-icon" data-up="${i}" title="Naik">${icon("chevron-up", 14)}</button>
+              <button type="button" class="btn-icon" data-down="${i}" title="Turun">${icon("chevron-down", 14)}</button>
+              <button type="button" class="btn-icon" data-rm="${i}" style="color:var(--bad)" title="Hapus">${icon("trash", 14)}</button>
             </div>
           </div>
-          <input class="input" data-label="${i}" value="${escapeHTML(fld.label || "")}" placeholder="Tulis pertanyaan...">
-          ${meta.hasOpts ? `<textarea class="input" data-opts="${i}" rows="2" style="margin-top:8px" placeholder="Satu opsi per baris">${escapeHTML((fld.options || []).join("\n"))}</textarea>` : ""}
-          <label class="chk" style="margin-top:8px;font-size:13px"><input type="checkbox" data-req="${i}" ${fld.required ? "checked" : ""}><span class="box">${icon("check", 12)}</span> Wajib diisi</label>
+          <input class="input" data-label="${i}" value="${escapeHTML(fld.label || "")}" placeholder="Tulis pertanyaan…" style="margin-bottom:8px">
+          <input class="input" data-desc="${i}" value="${escapeHTML(fld.description || "")}" placeholder="Deskripsi/petunjuk (opsional)" style="font-size:12px;margin-bottom:8px;color:var(--ink-500)">
+          ${meta.hasOpts ? `<div class="fb-opts-box" style="margin-bottom:8px">
+            <div class="fb-opts-list">
+              ${(fld.options || []).map((opt, oi) => `<div class="fb-opt-row">
+                <span class="fb-opt-bullet"></span>
+                <input class="fb-opt-input" data-optfield="${i}" data-optidx="${oi}" value="${escapeHTML(opt)}" placeholder="Opsi ${oi + 1}">
+                <button type="button" class="fb-opt-del" data-optdel="${i}" data-optdelidx="${oi}" title="Hapus">${icon("x", 11)}</button>
+              </div>`).join("")}
+            </div>
+            <button type="button" class="fb-opt-add" data-optadd="${i}">${icon("plus", 12)} Tambah opsi</button>
+          </div>` : ""}
+          ${fld.type === "rating" ? `<div style="display:flex;gap:8px;margin-bottom:8px">
+            <input class="input" data-lo="${i}" value="${escapeHTML(String(fld.ratingLow || 1))}" type="number" min="0" max="5" style="width:70px" placeholder="Min">
+            <input class="input" data-hi="${i}" value="${escapeHTML(String(fld.ratingHigh || 5))}" type="number" min="1" max="10" style="width:70px" placeholder="Max">
+            <input class="input" data-lolabel="${i}" value="${escapeHTML(fld.ratingLowLabel || "")}" placeholder="Label min (misal: Sangat Buruk)" style="flex:1">
+            <input class="input" data-hilabel="${i}" value="${escapeHTML(fld.ratingHighLabel || "")}" placeholder="Label max (misal: Sangat Baik)" style="flex:1">
+          </div>` : ""}
+          <label class="chk" style="font-size:13px"><input type="checkbox" data-req="${i}" ${fld.required ? "checked" : ""}><span class="box">${icon("check", 12)}</span> Wajib diisi</label>
         </div>`;
       }).join("");
+
+      fieldsBox.querySelectorAll("[data-type]").forEach((el) => el.addEventListener("change", () => {
+        const i = +el.dataset.type;
+        const newType = el.value;
+        const hasOpts = (FB_TYPES.find((t) => t.v === newType) || {}).hasOpts;
+        fields[i] = { ...fields[i], type: newType, options: hasOpts ? (fields[i].options?.length ? fields[i].options : ["Opsi 1", "Opsi 2"]) : [] };
+        drawFields();
+      }));
       fieldsBox.querySelectorAll("[data-label]").forEach((el) => el.addEventListener("input", () => (fields[+el.dataset.label].label = el.value)));
-      fieldsBox.querySelectorAll("[data-opts]").forEach((el) => el.addEventListener("input", () => (fields[+el.dataset.opts].options = el.value.split("\n").map((x) => x.trim()).filter(Boolean))));
+      fieldsBox.querySelectorAll("[data-desc]").forEach((el) => el.addEventListener("input", () => (fields[+el.dataset.desc].description = el.value)));
+      fieldsBox.querySelectorAll("[data-optfield]").forEach((el) => el.addEventListener("input", () => {
+        fields[+el.dataset.optfield].options[+el.dataset.optidx] = el.value;
+      }));
+      fieldsBox.querySelectorAll("[data-optdel]").forEach((el) => el.addEventListener("click", () => {
+        fields[+el.dataset.optdel].options.splice(+el.dataset.optdelidx, 1);
+        drawFields();
+      }));
+      fieldsBox.querySelectorAll("[data-optadd]").forEach((el) => el.addEventListener("click", () => {
+        const fi = +el.dataset.optadd;
+        fields[fi].options.push(`Opsi ${fields[fi].options.length + 1}`);
+        drawFields();
+      }));
+      fieldsBox.querySelectorAll("[data-lo]").forEach((el) => el.addEventListener("input", () => (fields[+el.dataset.lo].ratingLow = +el.value)));
+      fieldsBox.querySelectorAll("[data-hi]").forEach((el) => el.addEventListener("input", () => (fields[+el.dataset.hi].ratingHigh = +el.value)));
+      fieldsBox.querySelectorAll("[data-lolabel]").forEach((el) => el.addEventListener("input", () => (fields[+el.dataset.lolabel].ratingLowLabel = el.value)));
+      fieldsBox.querySelectorAll("[data-hilabel]").forEach((el) => el.addEventListener("input", () => (fields[+el.dataset.hilabel].ratingHighLabel = el.value)));
       fieldsBox.querySelectorAll("[data-req]").forEach((el) => el.addEventListener("change", () => (fields[+el.dataset.req].required = el.checked)));
       fieldsBox.querySelectorAll("[data-rm]").forEach((el) => el.addEventListener("click", () => { fields.splice(+el.dataset.rm, 1); drawFields(); }));
       fieldsBox.querySelectorAll("[data-up]").forEach((el) => el.addEventListener("click", () => { const i = +el.dataset.up; if (i > 0) { [fields[i-1], fields[i]] = [fields[i], fields[i-1]]; drawFields(); } }));
       fieldsBox.querySelectorAll("[data-down]").forEach((el) => el.addEventListener("click", () => { const i = +el.dataset.down; if (i < fields.length-1) { [fields[i+1], fields[i]] = [fields[i], fields[i+1]]; drawFields(); } }));
     };
     drawFields();
-    document.querySelectorAll("[data-add]").forEach((b) => b.addEventListener("click", () => {
+
+    document.getElementById("fbAddBtns").querySelectorAll("[data-add]").forEach((b) => b.addEventListener("click", () => {
       const type = b.dataset.add;
       const hasOpts = (FB_TYPES.find((t) => t.v === type) || {}).hasOpts;
-      fields.push({ type, label: "", options: hasOpts ? ["Opsi 1", "Opsi 2"] : [], required: false });
+      fields.push({ type, label: "", description: "", options: hasOpts ? ["Opsi 1", "Opsi 2"] : [], required: false });
       drawFields();
+      // Scroll to new field
+      fieldsBox.lastElementChild?.scrollIntoView({ behavior: "smooth", block: "center" });
     }));
 
     /* --- Save --- */
@@ -5417,6 +6131,8 @@ PAGES.adminForms = async function () {
       const training_id = document.getElementById("fTraining").value || null;
       msg.innerHTML = "";
       if (!title) { msg.innerHTML = `<div class="alert alert-error">Judul form wajib diisi.</div>`; return; }
+      if (!fields.length) { msg.innerHTML = `<div class="alert alert-error">Tambahkan minimal satu pertanyaan.</div>`; return; }
+      if (fields.some((x) => !x.label.trim())) { msg.innerHTML = `<div class="alert alert-error">Semua pertanyaan harus memiliki teks.</div>`; return; }
 
       const base = { title, description: description || null, type, training_id, mode: "gform" };
       const setBusy = (txt) => { saveBtn.disabled = true; saveBtn.innerHTML = `<span class="spin"></span> ${txt}`; };
@@ -5430,11 +6146,15 @@ PAGES.adminForms = async function () {
           toast("Form diperbarui.");
           showList();
         } else {
-          if (!fields.length) { msg.innerHTML = `<div class="alert alert-error">Tambahkan minimal satu pertanyaan.</div>`; return; }
-          if (fields.some((x) => !x.label.trim())) { msg.innerHTML = `<div class="alert alert-error">Semua pertanyaan harus memiliki teks.</div>`; return; }
           setBusy("Membuat Google Form…");
           const r = await _createGoogleForm({ title, description, type, fields });
-          const payload = { ...base, fields, gform_url: r.publishedUrl, gform_embed_url: _fbDeriveEmbed(r.publishedUrl || ""), gform_edit_url: r.editUrl || null, gsheet_id: r.formId || null };
+          const payload = {
+            ...base, fields,
+            gform_url: r.publishedUrl,
+            gform_embed_url: _fbDeriveEmbed(r.publishedUrl || ""),
+            gform_edit_url: r.editUrl || null,
+            gsheet_id: r.formId || null,
+          };
           const { error } = await _supabase.from("forms").insert(payload);
           if (error) throw new Error(error.message);
           toast("Google Form berhasil dibuat dan tertaut!");
@@ -5517,82 +6237,6 @@ PAGES.adminForms = async function () {
              " " + d.toLocaleTimeString("id-ID", { hour:"2-digit", minute:"2-digit" });
     }
 
-    // Auto-generate intelligent KPI summaries from column data
-    function buildColumnSummaries(headers, rows) {
-      const summaries = [];
-      for (let ci = 1; ci < headers.length; ci++) {
-        const hdr = cell(headers[ci]);
-        const vals = rows.map((r) => cell(r[ci])).filter((v) => v.trim() !== "");
-        if (!vals.length) continue;
-
-        const nums = vals.map(Number).filter((n) => !isNaN(n) && String(vals[0]).trim() !== "");
-        const allNumeric = nums.length === vals.length && vals.length > 0;
-
-        if (allNumeric && nums.length > 0) {
-          const avg = (nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(1);
-          const mx = Math.max(...nums);
-          const mn = Math.min(...nums);
-          summaries.push({ type:"numeric", label: hdr, avg, max:mx, min:mn, n:nums.length });
-        } else {
-          // Categorical: count frequencies
-          const freq = {};
-          vals.forEach((v) => { freq[v] = (freq[v] || 0) + 1; });
-          const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1]);
-          const unique = sorted.length;
-          const top = sorted.slice(0, 5);
-          summaries.push({ type:"categorical", label: hdr, top, unique, n: vals.length });
-        }
-      }
-      return summaries;
-    }
-
-    function renderSummaryCards(summaries) {
-      if (!summaries.length) return "";
-      return `<div style="margin-bottom:10px">
-        <div style="font-size:13px;font-weight:700;color:var(--ink-600);margin-bottom:8px;display:flex;align-items:center;gap:6px">${icon("bar-chart",15)} Ringkasan Jawaban</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">
-          ${summaries.map((s) => {
-            if (s.type === "numeric") {
-              const pct = Math.round((s.avg / s.max) * 100) || 0;
-              return `<div class="card" style="padding:16px 18px">
-                <div style="font-size:12px;font-weight:700;color:var(--ink-500);margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHTML(s.label)}">${escapeHTML(s.label)}</div>
-                <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:8px">
-                  <span style="font-size:26px;font-weight:800;color:var(--primary)">${s.avg}</span>
-                  <span style="font-size:12px;color:var(--ink-400)">rata-rata</span>
-                </div>
-                <div style="height:6px;background:var(--border);border-radius:99px;overflow:hidden;margin-bottom:6px">
-                  <div style="height:100%;width:${pct}%;background:var(--primary);border-radius:99px;transition:width .4s"></div>
-                </div>
-                <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ink-400)">
-                  <span>Min: ${s.min}</span><span>${s.n} respons</span><span>Max: ${s.max}</span>
-                </div>
-              </div>`;
-            } else {
-              const total = s.n;
-              return `<div class="card" style="padding:16px 18px">
-                <div style="font-size:12px;font-weight:700;color:var(--ink-500);margin-bottom:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHTML(s.label)}">${escapeHTML(s.label)}</div>
-                <div style="display:flex;flex-direction:column;gap:6px">
-                  ${s.top.map(([val, cnt]) => {
-                    const pct = Math.round((cnt / total) * 100);
-                    return `<div>
-                      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
-                        <span style="font-weight:600;color:var(--ink-800);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px" title="${escapeHTML(val)}">${escapeHTML(val)}</span>
-                        <span style="color:var(--ink-400);flex-shrink:0;margin-left:6px">${cnt} (${pct}%)</span>
-                      </div>
-                      <div style="height:5px;background:var(--border);border-radius:99px;overflow:hidden">
-                        <div style="height:100%;width:${pct}%;background:var(--ok);border-radius:99px;transition:width .4s"></div>
-                      </div>
-                    </div>`;
-                  }).join("")}
-                </div>
-                <div style="font-size:11px;color:var(--ink-400);margin-top:6px">${s.unique} opsi · ${total} respons</div>
-              </div>`;
-            }
-          }).join("")}
-        </div>
-      </div>`;
-    }
-
     function renderPage(data) {
       const headers = data.headers || [];
       const rows = data.rows || [];
@@ -5601,8 +6245,6 @@ PAGES.adminForms = async function () {
       const latestTs = rows[0]?.[0];
       const latestD = latestTs ? parseGFTimestamp(latestTs) : null;
       const latestDate = latestD ? latestD.toLocaleDateString("id-ID", { day:"numeric", month:"short", year:"numeric" }) : "—";
-      const summaries = buildColumnSummaries(headers, rows);
-
       c.innerHTML = `
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
           <button class="btn btn-ghost btn-sm" id="respBack" style="gap:6px">${icon("arrow-left",15)} Kembali</button>
@@ -5645,9 +6287,6 @@ PAGES.adminForms = async function () {
           { icon:"bar-chart",      bg:"var(--warn-bg)",      color:"var(--warn)",    value:headers.length - 1,         label:"Pertanyaan",      sub:"" },
           { icon:"users",          bg:"#F3E8FF",             color:"#7C3AED",        value:`${Math.round((rows.length/Math.max(total,1))*100)}%`, label:"Response Rate",   sub:"dari total entri" },
         ]);
-
-        // Auto KPI summaries
-        c.innerHTML += renderSummaryCards(summaries);
 
         // Filter bar
         c.innerHTML += `
@@ -5767,12 +6406,41 @@ PAGES.adminForms = async function () {
         <div class="loader" style="min-height:220px"><div class="spinner"></div>Memuat respons…</div>`;
       document.getElementById("respBack").addEventListener("click", showList);
 
-      if (!formId) {
-        c.innerHTML += `<div class="card card-pad" style="text-align:center;padding:48px">
-          ${icon("alert-triangle",28)}<p style="margin-top:10px;font-weight:600">Form belum terhubung ke Google Forms.</p></div>`;
-        return;
-      }
       try {
+        // Primary source: Supabase form_responses (stores ALL fields incl. custom)
+        const { data: supRows } = await _supabase
+          .from("form_responses")
+          .select("id, respondent_id, response_data, submitted_at")
+          .eq("form_id", form.id)
+          .order("submitted_at", { ascending: false });
+
+        if (supRows && supRows.length) {
+          // Build column order: form.fields labels first, then any extra keys from actual data
+          const fieldLabels = Array.isArray(form.fields) ? form.fields.map((f) => f.label) : [];
+          const extraKeys = new Set();
+          supRows.forEach((r) => {
+            Object.keys(r.response_data || {}).forEach((k) => {
+              if (!fieldLabels.includes(k)) extraKeys.add(k);
+            });
+          });
+          const allCols = [...fieldLabels, ...Array.from(extraKeys)];
+          const headers = ["Timestamp", ...allCols];
+          const rows = supRows.map((r) => {
+            const ans = r.response_data || {};
+            return [r.submitted_at || "", ...allCols.map((k) => {
+              const v = ans[k];
+              return Array.isArray(v) ? v.join(", ") : (v ?? "");
+            })];
+          });
+          renderPage({ headers, rows, totalResponses: rows.length });
+          return;
+        }
+
+        // Fallback: Google Sheets (for forms without Supabase responses yet)
+        if (!formId) {
+          renderPage({ headers: [], rows: [], totalResponses: 0 });
+          return;
+        }
         const data = await _getFormResponses(formId);
         renderPage(data);
       } catch (e) {
