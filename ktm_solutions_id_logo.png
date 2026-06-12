@@ -1,0 +1,678 @@
+/* =====================================================================
+   ILP Academy LMS 2026 — assets/auth.js
+   Supabase init, authentication, role guards, shared UI helpers,
+   redesigned app shell (sidebar + topbar + global search + notifications
+   + profile menu + mobile bottom-nav), toasts, modals, confirm dialog.
+   Loaded on every page (after the Supabase CDN script).
+   ===================================================================== */
+
+/* ---------- 1. CONFIG ------------------------------------------------- */
+/* Override at runtime by defining window.ILP_CONFIG before this script. */
+const SUPABASE_URL =
+  (window.ILP_CONFIG && window.ILP_CONFIG.SUPABASE_URL) ||
+  "https://epimoqqaxzajydrbvjtq.supabase.co";
+const SUPABASE_ANON_KEY =
+  (window.ILP_CONFIG && window.ILP_CONFIG.SUPABASE_ANON_KEY) ||
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwaW1vcXFheHphanlkcmJ2anRxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAxMzIyNzIsImV4cCI6MjA5NTcwODI3Mn0.SbcLBQ-xSVJu1xD3gAoZGBC7UzgKTzCoYNiIGxVQzAw";
+const SITE_URL = window.location.origin;
+
+/* Asset version — bump this (match CACHE_VER in sw.js) whenever static assets
+   like logos are updated. Forces browser to bypass cache for those files. */
+const ASSET_VER = "v138";
+
+/* ---------- 2. Init client (global) ----------------------------------- */
+const _supabase = window.supabase
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { persistSession: true, autoRefreshToken: true, storageKey: "ilp-session" }
+    })
+  : null;
+
+/* ---------- 3. Auth helpers ------------------------------------------- */
+async function getSession() {
+  if (!_supabase) return null;
+  const { data: { session } } = await _supabase.auth.getSession();
+  return session;
+}
+async function getCurrentUser() {
+  if (!_supabase) return null;
+  const { data: { user } } = await _supabase.auth.getUser();
+  return user;
+}
+async function getProfile() {
+  const user = await getCurrentUser();
+  if (!user) return null;
+  const { data } = await _supabase.from("profiles").select("*").eq("id", user.id).single();
+  return data;
+}
+async function signOut() {
+  await _supabase.auth.signOut();
+  window.location.href = "login.html";
+}
+
+/* ---------- 4. Query cache -------------------------------------------- */
+const _qc = new Map();
+const QC_TTL = 60_000;
+function qc(key, fn, ttl = QC_TTL) {
+  const hit = _qc.get(key);
+  if (hit && Date.now() - hit.t < ttl) return Promise.resolve(hit.v);
+  return fn().then((r) => {
+    if (!r.error) _qc.set(key, { v: r, t: Date.now() });
+    return r;
+  });
+}
+function qcInvalidate(...patterns) {
+  for (const k of _qc.keys()) {
+    if (patterns.some((p) => k.startsWith(p))) _qc.delete(k);
+  }
+}
+
+/* ---------- 5. SPA state ---------------------------------------------- */
+let _cachedProfile = null;
+let _shellRendered = false;
+
+function navigate(hash) {
+  const filename = location.pathname.split("/").pop();
+  if (filename === "app.html" || filename === "" || filename === "/") {
+    location.hash = hash;
+  } else {
+    location.href = "app.html#" + hash;
+  }
+}
+
+async function requireAuth(role) {
+  if (_cachedProfile) {
+    if (role && _cachedProfile.role !== role) {
+      navigate(_cachedProfile.role === "admin" ? "admin" : "training");
+      return null;
+    }
+    return _cachedProfile;
+
+  }
+  const session = await getSession();
+  if (!session) { window.location.href = "login.html"; return null; }
+  const profile = await getProfile();
+  if (!profile) { await signOut(); return null; }
+  _cachedProfile = profile;
+  if (role && profile.role !== role) {
+    navigate(profile.role === "admin" ? "admin" : "training");
+    return null;
+  }
+  return profile;
+}
+
+/* ---------- 6. SVG icons (no emoji — everything is an inline SVG) ----- */
+const ICONS = {
+  dashboard:'<rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>',
+  grid:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/>',
+  home:'<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9 21v-6h6v6"/>',
+  calendar:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+  "calendar-check":'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M9 16l2 2 4-4"/>',
+  book:'<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',
+  task:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+  clipboard:'<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6M9 16h6"/>',
+  "clipboard-check":'<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 14l2 2 4-4"/>',
+  chat:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  message:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  users:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+  user:'<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  upload:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/>',
+  download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/>',
+  video:'<path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  check:'<path d="M20 6L9 17l-5-5"/>',
+  "check-circle":'<circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/>',
+  "x-circle":'<circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/>',
+  "alert-triangle":'<path d="M10.3 3.6 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+  info:'<circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  edit:'<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
+  trash:'<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>',
+  logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/>',
+  chevron:'<path d="M6 9l6 6 6-6"/>',
+  "chevron-right":'<path d="M9 18l6-6-6-6"/>',
+  arrow:'<path d="M5 12h14M12 5l7 7-7 7"/>',
+  "arrow-left":'<path d="M19 12H5M12 19l-7-7 7-7"/>',
+  "arrow-right":'<path d="M5 12h14M12 5l7 7-7 7"/>',
+  file:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',
+  "file-text":'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6"/>',
+  trend:'<path d="M23 6l-9.5 9.5-5-5L1 18"/><path d="M17 6h6v6"/>',
+  "trend-down":'<path d="M23 18l-9.5-9.5-5 5L1 6"/><path d="M17 18h6v-6"/>',
+  menu:'<path d="M3 12h18M3 6h18M3 18h18"/>',
+  close:'<path d="M18 6L6 18M6 6l12 12"/>',
+  lock:'<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  key:'<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 21 2M16 7l3 3M14 9l3 3"/>',
+  shield:'<path d="M12 2 4 5v6c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V5l-8-3z"/>',
+  star:'<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
+  "star-fill":'<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" fill="currentColor"/>',
+  bell:'<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>',
+  search:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+  settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+  chart:'<path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="6" rx="1"/><rect x="12" y="7" width="3" height="10" rx="1"/><rect x="17" y="13" width="3" height="4" rx="1"/>',
+  pie:'<path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/>',
+  activity:'<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  award:'<circle cx="12" cy="8" r="6"/><path d="M15.5 13.5 17 22l-5-3-5 3 1.5-8.5"/>',
+  target:'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/>',
+  insight:'<path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2h6c0-.8.4-1.5 1-2A7 7 0 0 0 12 2z"/>',
+  mail:'<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 6 10 7 10-7"/>',
+  phone:'<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.5 2.1L8.1 9.5a16 16 0 0 0 6 6l1.1-1.1a2 2 0 0 1 2.1-.5c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2z"/>',
+  send:'<path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z"/>',
+  eye:'<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
+  filter:'<path d="M22 3H2l8 9.5V19l4 2v-8.5L22 3z"/>',
+  list:'<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  type:'<path d="M4 7V4h16v3M9 20h6M12 4v16"/>',
+  "radio-icon":'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5" fill="currentColor"/>',
+  "check-square":'<path d="M9 11l3 3L20 6"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+  briefcase:'<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>',
+  grip:'<circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/>',
+  refresh:'<path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/>',
+  wave:'<path d="M7 11V6a1.5 1.5 0 0 1 3 0v4M10 9.5V5a1.5 1.5 0 0 1 3 0v5M13 10V6.5a1.5 1.5 0 0 1 3 0V13"/><path d="M16 8.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7h-1.6a6 6 0 0 1-4.6-2.2l-3-3.7a1.5 1.5 0 0 1 2.2-2L7 13"/>',
+  inbox:'<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13l3.5 7v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6l3.5-7z"/>',
+  graduation:'<path d="M22 10 12 5 2 10l10 5 10-5z"/><path d="M6 12v5c0 1 2.7 2.5 6 2.5s6-1.5 6-2.5v-5"/>',
+  dot:'<circle cx="12" cy="12" r="5" fill="currentColor" stroke="none"/>',
+  circle:'<circle cx="12" cy="12" r="8"/>',
+  presentation:'<rect x="2" y="3" width="20" height="13" rx="2"/><path d="M8 21l4-4 4 4M12 17v-4"/>',
+  "layers":'<path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 12l10 5 10-5"/><path d="M2 17l10 5 10-5"/>',
+  "inbox-in":'<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13l3.5 7v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6l3.5-7z"/><path d="M12 2v7M9 6l3-3 3 3"/>',
+  "user-check":'<path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/>',
+  "bar-chart":'<path d="M3 3v18h18"/><rect x="7" y="8" width="3" height="9" rx="1"/><rect x="12" y="5" width="3" height="12" rx="1"/><rect x="17" y="11" width="3" height="6" rx="1"/>',
+  "message-circle":'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h8M8 14h5"/>',
+  "scan":'<path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><rect x="7" y="7" width="10" height="10" rx="1"/>',
+  "layout":'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>',
+};
+function icon(name, size = 20) {
+  return `<svg class="icon" viewBox="0 0 24 24" width="${size}" height="${size}">${ICONS[name] || ""}</svg>`;
+}
+
+/* ---------- 7. Brand / avatar helpers --------------------------------- */
+function logoHTML() {
+  return `<span style="display:flex;align-items:center;gap:10px"><img class="nav-logo" src="assets/inspiring-lecturer-logo.png?${ASSET_VER}" alt="Inspiring Lecturer" /><span style="width:1px;height:28px;background:#E2E8F0;display:inline-block;flex-shrink:0"></span><img class="nav-logo" src="assets/ktm_solutions_id_logo.png?${ASSET_VER}" alt="KTM Solutions" style="height:42px" /></span>`;
+}
+const AVATAR_COLORS = ["#215AA9", "#059669", "#D97706", "#7C3AED", "#DC2626", "#0891B2", "#DB2777", "#4F46E5"];
+function initials(name) {
+  return (name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase() || "?";
+}
+function avatarColor(name) {
+  let h = 0;
+  for (const ch of String(name || "")) h = (h * 31 + ch.charCodeAt(0)) % 9973;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+
+/* ---------- 8. Formatters --------------------------------------------- */
+function fmtDate(d) {
+  if (!d) return "-";
+  return new Date(d).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
+}
+function fmtDateTime(d) {
+  if (!d) return "-";
+  return new Date(d).toLocaleString("id-ID", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+function fmtTime(t) { if (!t) return ""; return String(t).slice(0, 5); }
+function isPast(d) { if (!d) return false; return new Date(d).getTime() < Date.now(); }
+function timeAgo(d) {
+  if (!d) return "";
+  const s = Math.floor((Date.now() - new Date(d).getTime()) / 1000);
+  if (s < 60) return "baru saja";
+  const m = Math.floor(s / 60); if (m < 60) return `${m} menit lalu`;
+  const h = Math.floor(m / 60); if (h < 24) return `${h} jam lalu`;
+  const days = Math.floor(h / 24); if (days < 7) return `${days} hari lalu`;
+  const w = Math.floor(days / 7); if (w < 5) return `${w} minggu lalu`;
+  return fmtDate(d);
+}
+function escapeHTML(s) {
+  if (s == null) return "";
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/* ---------- 9. Modal helper ------------------------------------------- */
+function openModal(title, bodyHTML, opts = {}) {
+  closeModal();
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.id = "app-modal";
+  overlay.innerHTML = `
+    <div class="modal ${opts.wide ? "wide" : ""}" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h3>${escapeHTML(title)}</h3>
+        <button class="btn-icon" data-close aria-label="Tutup">${icon("close", 18)}</button>
+      </div>
+      <div class="modal-body">${bodyHTML}</div>
+    </div>`;
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay || e.target.closest("[data-close]")) closeModal();
+  });
+  document.body.appendChild(overlay);
+  return overlay;
+}
+function closeModal() {
+  const m = document.getElementById("app-modal");
+  if (m) m.remove();
+}
+
+/* ---------- 10. Confirm dialog (replaces window.confirm) -------------- */
+function confirmDialog(opts = {}) {
+  const {
+    title = "Konfirmasi",
+    message = "",
+    confirmText = "Lanjutkan",
+    cancelText = "Batal",
+    danger = false,
+    warn = false,
+    icon: ic = danger ? "alert-triangle" : warn ? "alert-triangle" : "info",
+    destructiveNote = danger,
+  } = opts;
+  const iconType = danger ? "danger" : warn ? "warn" : "info";
+  return new Promise((resolve) => {
+    closeModal();
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.id = "app-modal";
+    overlay.style.cssText = "z-index:9999";
+    overlay.innerHTML = `
+      <div class="modal cdlg" role="dialog" aria-modal="true">
+        <div class="cdlg-body">
+          <div class="cdlg-icon-wrap ${iconType}">${icon(ic, 28)}</div>
+          <div class="cdlg-title">${escapeHTML(title)}</div>
+          <p class="cdlg-msg">${message}</p>
+          ${destructiveNote ? `<p class="cdlg-note">${icon("alert-triangle",13)} Tindakan ini tidak dapat dibatalkan.</p>` : ""}
+          <div class="cdlg-actions">
+            <button class="btn btn-cancel" data-cancel>${escapeHTML(cancelText)}</button>
+            <button class="btn ${danger ? "btn-danger" : "btn-primary"} btn-confirm" data-confirm>
+              <span class="cdlg-btn-text">${escapeHTML(confirmText)}</span>
+              <span class="cdlg-spinner"></span>
+            </button>
+          </div>
+        </div>
+      </div>`;
+    const done = (val) => { overlay.remove(); resolve(val); };
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay || e.target.closest("[data-cancel]")) done(false);
+      if (e.target.closest("[data-confirm]")) {
+        e.target.closest("[data-confirm]").classList.add("loading");
+        done(true);
+      }
+    });
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.querySelector("[data-confirm]").focus());
+  });
+}
+
+/* ---------- 11. Toast helper (pill + progress + stack) ---------------- */
+function _toastWrap() {
+  let w = document.getElementById("toast-wrap");
+  if (!w) { w = document.createElement("div"); w.id = "toast-wrap"; w.className = "toast-wrap"; document.body.appendChild(w); }
+  return w;
+}
+function toast(msg, type = "success") {
+  const ic = { success: "check-circle", error: "x-circle", info: "info", warning: "alert-triangle" }[type] || "check-circle";
+  const el = document.createElement("div");
+  el.className = `toast ${type}`;
+  el.innerHTML = `${icon(ic, 17)}<span>${escapeHTML(msg)}</span><span class="bar"></span>`;
+  _toastWrap().appendChild(el);
+  setTimeout(() => { el.classList.add("out"); setTimeout(() => el.remove(), 220); }, 3000);
+}
+
+/* ---------- 12. Skeleton helper --------------------------------------- */
+function skeletonCards(n = 4) {
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px">${Array.from({ length: n }).map(() => `<div class="skel skel-card"></div>`).join("")}</div>`;
+}
+
+/* ---------- 13. Navigation definitions (with sections) ---------------- */
+const PARTICIPANT_NAV = [
+  { href: "#training",  label: "Jadwal Training", icon: "presentation",    section: "Menu Utama" },
+  { href: "#profile",   label: "Profil Saya",     icon: "user",            section: "Akun" },
+];
+const ADMIN_NAV = [
+  { href: "#admin",           label: "Dashboard",     icon: "layout",        section: "Manajemen" },
+  { href: "#adminPeserta",    label: "Peserta",        icon: "users",         section: "Manajemen" },
+  { href: "#adminTraining",   label: "Training",       icon: "presentation",  section: "Manajemen" },
+  { href: "#adminTugas",      label: "Tugas",          icon: "task",          section: "Manajemen" },
+  { href: "#adminSubmission", label: "Submission",     icon: "inbox-in",      section: "Manajemen" },
+  { href: "#adminKehadiran",  label: "Kehadiran",      icon: "user-check",    section: "Manajemen" },
+  { href: "#adminAnalytics",  label: "Analitik",       icon: "bar-chart",     section: "Tools" },
+  { href: "#adminForms",      label: "Form Builder",   icon: "clipboard",     section: "Tools" },
+  { href: "#profile",         label: "Profil Saya",    icon: "user",          section: "Akun" },
+];
+
+const PAGE_TITLES = {
+  dashboard: "Home", training: "Training", materi: "Materi", tugas: "Tugas", forms: "Formulir", feedback: "Feedback",
+  profile: "Profil Saya",
+  admin: "Dashboard", adminPeserta: "Peserta", adminTraining: "Training", adminMateri: "Materi",
+  adminTugas: "Tugas", adminSubmission: "Submission", adminKehadiran: "Kehadiran",
+  adminAnalytics: "Analitik", adminForms: "Form Builder",
+};
+
+function _updateActiveNav() {
+  const hash = location.hash.slice(1);
+  document.querySelectorAll(".nav-link").forEach((a) => {
+    const linkHash = (a.getAttribute("href") || "").replace(/^#/, "");
+    a.classList.toggle("active", linkHash === hash);
+  });
+  document.querySelectorAll(".bn-item").forEach((a) => {
+    const linkHash = (a.getAttribute("href") || "").replace(/^#/, "");
+    a.classList.toggle("active", linkHash === hash);
+  });
+  const bc = document.getElementById("breadcrumbCur");
+  if (bc) bc.textContent = PAGE_TITLES[hash] || "";
+}
+
+/* ---------- 14. Render shared app shell ------------------------------- */
+function renderShell(profile, navItems, roleLabel) {
+  if (_shellRendered) { _updateActiveNav(); return; }
+  _shellRendered = true;
+
+  document.getElementById("page-loader")?.remove();
+
+  const isAdmin = profile.role === "admin";
+  const hash = location.hash.slice(1);
+
+  let sidebarNav = "";
+  let lastSection = null;
+  navItems.forEach((n) => {
+    if (n.section && n.section !== lastSection) {
+      sidebarNav += `<p class="nav-section-label">${escapeHTML(n.section)}</p>`;
+      lastSection = n.section;
+    }
+    const linkHash = n.href.replace(/^#/, "");
+    const active = linkHash === hash ? "active" : "";
+    sidebarNav += `<a class="nav-link ${active}" href="${n.href}"><span class="nav-icon-box">${icon(n.icon, 17)}</span><span>${n.label}</span></a>`;
+  });
+
+  const avColor = avatarColor(profile.full_name || profile.email);
+  const inits = initials(profile.full_name || profile.email);
+  const roleBadge = isAdmin
+    ? `<span class="badge badge-primary">Administrator</span>`
+    : `<span class="badge badge-success">Peserta</span>`;
+
+  const bottomNav = !isAdmin
+    ? `<nav class="bottom-nav">
+        ${[
+          { href: "#training", label: "Training", icon: "presentation" },
+          { href: "#profile", label: "Profil", icon: "user" },
+        ].map((n) => {
+          const a = n.href.slice(1) === hash ? "active" : "";
+          return `<a class="bn-item ${a}" href="${n.href}">${icon(n.icon, 21)}<span>${n.label}</span></a>`;
+        }).join("")}
+      </nav>`
+    : "";
+
+  const app = document.getElementById("app");
+  if (!isAdmin) document.body.classList.add("has-bottom-nav");
+
+  app.innerHTML = `
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <div class="sidebar-logo-wrap">
+          <img src="assets/inspiring-lecturer-logo.png?${ASSET_VER}" alt="Inspiring Lecturer" class="sidebar-logo" />
+          <div class="sidebar-logo-divider"></div>
+          <img src="assets/ktm_solutions_id_logo.png?${ASSET_VER}" alt="KTM Solutions" class="sidebar-logo sidebar-logo-ktm" />
+        </div>
+      </div>
+      <nav>${sidebarNav}</nav>
+      <div class="sidebar-foot">
+        <div class="sidebar-copy"><span class="sidebar-copy-brand">Inspiring Lecturer by Paragon 2026</span><span class="sidebar-copy-sub">Copyright &copy; 2026 All Rights Reserved</span></div>
+      </div>
+    </aside>
+    <div class="main">
+      <header class="topbar">
+
+        <div class="breadcrumb">
+          <span>${isAdmin ? "Admin" : "ILP Academy"}</span>${icon("chevron-right", 14)}<span class="cur" id="breadcrumbCur">${PAGE_TITLES[hash] || ""}</span>
+        </div>
+        <div class="tb-logo-mobile">
+          <img src="assets/inspiring-lecturer-logo.png?${ASSET_VER}" alt="ILP" class="tb-logo-img" />
+          <div class="tb-logo-divider"></div>
+          <img src="assets/ktm_solutions_id_logo.png?${ASSET_VER}" alt="KTM" class="tb-logo-img tb-logo-ktm" />
+        </div>
+
+        <div class="gsearch" id="gsearch">
+          <div class="gsearch-box">
+            ${icon("search", 17).replace('class="icon"', 'class="icon s-ico"')}
+            <input type="text" id="gsearchInput" placeholder="Cari training, materi, tugas..." autocomplete="off" />
+            <span class="gsearch-clear" id="gsearchClear" style="display:none">${icon("close", 15)}</span>
+            <span class="gsearch-kbd" id="gsearchKbd">Ctrl K</span>
+          </div>
+          <div id="gsearchPop"></div>
+        </div>
+
+        <div class="tb-actions">
+          <div class="profile-trigger" id="profileTrigger">
+            <div class="who" style="text-align:right;line-height:1.25">
+              <div class="name" style="font-size:13.5px;font-weight:600;color:#fff">${escapeHTML(profile.full_name || roleLabel)}</div>
+              <div class="role" style="font-size:11.5px;color:rgba(255,255,255,0.65)">${roleLabel}</div>
+            </div>
+            <span class="avatar-init" style="background:${avColor}">${escapeHTML(inits)}</span>
+          </div>
+          <div id="profilePopWrap" style="position:relative"></div>
+          <button class="tb-btn" id="notifBtn" aria-label="Notifikasi" title="Notifikasi">
+            ${icon("bell", 24)}
+            <span class="tb-badge" id="notifBadge" style="display:none">0</span>
+          </button>
+          <div id="notifPopWrap" style="position:relative"></div>
+          <button class="tb-btn" id="signOutBtn" aria-label="Keluar" title="Keluar">
+            ${icon("logout", 22)}
+          </button>
+        </div>
+      </header>
+      <main class="content" id="content"><div class="loader"><div class="spinner"></div>Memuat...</div></main>
+      ${bottomNav}
+    </div>`;
+
+  document.getElementById("signOutBtn")?.addEventListener("click", signOut);
+
+  const sidebar = document.getElementById("sidebar");
+  const overlay = document.getElementById("sidebarOverlay");
+  const toggle = document.getElementById("menuToggle");
+  const openSidebar = () => { sidebar.classList.add("open"); overlay.classList.add("active"); };
+  const closeSidebar = () => { sidebar.classList.remove("open"); overlay.classList.remove("active"); };
+  if (toggle) toggle.addEventListener("click", () => (sidebar.classList.contains("open") ? closeSidebar() : openSidebar()));
+  if (overlay) overlay.addEventListener("click", closeSidebar);
+  sidebar.querySelectorAll(".nav-link").forEach((a) =>
+    a.addEventListener("click", () => { if (window.innerWidth <= 860) closeSidebar(); })
+  );
+
+  // Swipe left to close sidebar
+  let _touchStartX = 0, _touchStartY = 0;
+  sidebar.addEventListener("touchstart", (e) => {
+    _touchStartX = e.touches[0].clientX;
+    _touchStartY = e.touches[0].clientY;
+  }, { passive: true });
+  sidebar.addEventListener("touchend", (e) => {
+    const dx = e.changedTouches[0].clientX - _touchStartX;
+    const dy = Math.abs(e.changedTouches[0].clientY - _touchStartY);
+    if (dx < -40 && dy < 60) closeSidebar();
+  }, { passive: true });
+
+  _wireProfileMenu(profile, roleLabel, avColor, inits, roleBadge);
+  _wireNotifications(profile);
+  _wireGlobalSearch(profile);
+
+}
+
+/* ---------- 15. Profile dropdown -------------------------------------- */
+function _wireProfileMenu(profile, roleLabel, avColor, inits, roleBadge) {
+  const trigger = document.getElementById("profileTrigger");
+  const wrap = document.getElementById("profilePopWrap");
+  if (!trigger || !wrap) return;
+  let open = false;
+  const close = () => { open = false; wrap.innerHTML = ""; document.removeEventListener("click", outside); };
+  const outside = (e) => { if (!wrap.contains(e.target) && !trigger.contains(e.target)) close(); };
+  trigger.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (open) return close();
+    open = true;
+    wrap.innerHTML = `
+      <div class="menu-pop" style="position:absolute;top:8px;right:0;width:240px">
+        <div style="padding:14px 16px;border-bottom:1px solid var(--border)">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span class="avatar-init" style="background:${avColor}">${escapeHTML(inits)}</span>
+            <div style="min-width:0">
+              <div style="font-size:13.5px;font-weight:700;color:var(--ink-900);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHTML(profile.full_name || roleLabel)}</div>
+              <div style="font-size:11.5px;color:var(--ink-500);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHTML(profile.email || "")}</div>
+            </div>
+          </div>
+          <div style="margin-top:9px">${roleBadge}</div>
+        </div>
+        <button class="menu-item" id="pm-profile">${icon("user", 16)} Profil Saya</button>
+        <div class="menu-sep"></div>
+        <button class="menu-item" id="pm-logout" style="color:var(--bad)">${icon("logout", 16)} Keluar</button>
+      </div>`;
+    wrap.querySelector("#pm-profile").addEventListener("click", () => { close(); navigate("profile"); });
+    wrap.querySelector("#pm-logout").addEventListener("click", signOut);
+    setTimeout(() => document.addEventListener("click", outside), 0);
+  });
+}
+
+/* ---------- 16. Notifications (provider supplied by main.js) ---------- */
+async function _refreshNotifBadge(profile) {
+  const badge = document.getElementById("notifBadge");
+  if (!badge || typeof window.__ilpNotifs !== "function") return;
+  try {
+    const list = await window.__ilpNotifs(profile);
+    const unread = list.filter((n) => !n.read).length;
+    badge.textContent = unread > 9 ? "9+" : String(unread);
+    badge.style.display = unread ? "grid" : "none";
+  } catch (_) {}
+}
+function _wireNotifications(profile) {
+  const btn = document.getElementById("notifBtn");
+  const wrap = document.getElementById("notifPopWrap");
+  if (!btn || !wrap) return;
+  let open = false;
+  const close = () => { open = false; wrap.innerHTML = ""; document.removeEventListener("click", outside); };
+  const outside = (e) => { if (!wrap.contains(e.target) && !btn.contains(e.target)) close(); };
+
+  btn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (open) return close();
+    open = true;
+    wrap.innerHTML = `<div class="notif-pop"><div class="notif-list"><div class="loader" style="min-height:120px"><div class="spinner"></div>Memuat...</div></div></div>`;
+    const list = typeof window.__ilpNotifs === "function" ? await window.__ilpNotifs(profile) : [];
+    const body = list.length
+      ? list.map((n) => `
+        <div class="notif-item ${n.read ? "" : "unread"}" data-nid="${escapeHTML(n.id)}" ${n.link ? `data-link="${escapeHTML(n.link)}"` : ""}>
+          <span class="n-ico" style="background:${n.bg};color:${n.color}">${icon(n.icon || "bell", 16)}</span>
+          <div style="flex:1;min-width:0">
+            <div class="n-title">${escapeHTML(n.title)}</div>
+            ${n.body ? `<div class="n-body">${escapeHTML(n.body)}</div>` : ""}
+            <div class="n-time">${escapeHTML(n.time || "")}</div>
+          </div>
+          ${n.read ? "" : `<span class="notif-dot"></span>`}
+        </div>`).join("")
+      : `<div class="notif-empty">${icon("bell", 26)}<p style="margin-top:8px">Belum ada notifikasi.</p></div>`;
+    wrap.innerHTML = `
+      <div class="notif-pop">
+        <div class="notif-head"><h4>Notifikasi</h4><button class="notif-mark" id="notifMarkAll">Tandai semua dibaca</button></div>
+        <div class="notif-list">${body}</div>
+      </div>`;
+    wrap.querySelector("#notifMarkAll").addEventListener("click", () => {
+      if (typeof window.__ilpMarkAllNotifs === "function") window.__ilpMarkAllNotifs(list);
+      wrap.querySelectorAll(".notif-item").forEach((i) => { i.classList.remove("unread"); i.querySelector(".notif-dot")?.remove(); });
+      _refreshNotifBadge(profile);
+    });
+    wrap.querySelectorAll(".notif-item").forEach((item) => {
+      item.addEventListener("click", () => {
+        if (typeof window.__ilpReadNotif === "function") window.__ilpReadNotif(item.dataset.nid);
+        const link = item.dataset.link;
+        close();
+        _refreshNotifBadge(profile);
+        if (link) navigate(link);
+      });
+    });
+    setTimeout(() => document.addEventListener("click", outside), 0);
+  });
+
+  _refreshNotifBadge(profile);
+}
+
+/* ---------- 17. Global search (provider supplied by main.js) ---------- */
+function _wireGlobalSearch(profile) {
+  const box = document.getElementById("gsearch");
+  const input = document.getElementById("gsearchInput");
+  const pop = document.getElementById("gsearchPop");
+  const clear = document.getElementById("gsearchClear");
+  if (!box || !input) return;
+
+  let timer = null, items = [], kbdIdx = -1;
+
+  const closePop = () => { pop.innerHTML = ""; items = []; kbdIdx = -1; };
+  const renderPop = (groups, q) => {
+    items = [];
+    let html = "";
+    const order = ["menu", "training", "materi", "tugas", "peserta"];
+    const labels = { menu: "Menu", training: "Training", materi: "Materi", tugas: "Tugas", peserta: "Peserta" };
+    let total = 0;
+    order.forEach((type) => {
+      const g = (groups[type] || []).slice(0, 5);
+      if (!g.length) return;
+      html += `<div class="gsearch-group-label">${labels[type]}</div>`;
+      g.forEach((r) => {
+        const idx = items.length;
+        items.push(r);
+        total++;
+        html += `<div class="gsearch-item" data-idx="${idx}">
+          <span class="gs-ico">${icon(r.icon || "file", 16)}</span>
+          <div style="min-width:0;flex:1">
+            <div class="gs-title">${escapeHTML(r.title)}</div>
+            ${r.desc ? `<div class="gs-desc">${escapeHTML(r.desc)}</div>` : ""}
+          </div>
+          ${r.badge ? `<span class="badge badge-primary" style="flex-shrink:0">${escapeHTML(r.badge)}</span>` : ""}
+        </div>`;
+      });
+    });
+    if (!total) {
+      html = `<div class="gsearch-empty">${icon("search", 24)}<p style="margin-top:8px">Tidak ada hasil untuk "<strong>${escapeHTML(q)}</strong>"</p></div>`;
+    }
+    pop.innerHTML = `<div class="gsearch-pop">${html}</div>`;
+    pop.querySelectorAll(".gsearch-item").forEach((el) => {
+      el.addEventListener("click", () => {
+        const r = items[+el.dataset.idx];
+        input.value = ""; clear.style.display = "none"; closePop();
+        if (r && r.hash) navigate(r.hash);
+      });
+    });
+  };
+
+  const doSearch = async () => {
+    const q = input.value.trim();
+    clear.style.display = q ? "grid" : "none";
+    if (!q || typeof window.__ilpSearch !== "function") { closePop(); return; }
+    const groups = await window.__ilpSearch(q, profile);
+    renderPop(groups, q);
+  };
+
+  input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(doSearch, 200); });
+  input.addEventListener("focus", () => { if (input.value.trim()) doSearch(); });
+  clear.addEventListener("click", () => { input.value = ""; clear.style.display = "none"; closePop(); input.focus(); });
+
+  const setActive = (i) => {
+    const els = pop.querySelectorAll(".gsearch-item");
+    if (!els.length) return;
+    kbdIdx = (i + els.length) % els.length;
+    els.forEach((el, n) => el.classList.toggle("kbd-active", n === kbdIdx));
+    els[kbdIdx].scrollIntoView({ block: "nearest" });
+  };
+  input.addEventListener("keydown", (e) => {
+    const els = pop.querySelectorAll(".gsearch-item");
+    if (e.key === "Escape") { input.value = ""; clear.style.display = "none"; closePop(); input.blur(); return; }
+    if (!els.length) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setActive(kbdIdx + 1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActive(kbdIdx - 1); }
+    else if (e.key === "Enter") {
+      e.preventDefault();
+      const target = kbdIdx >= 0 ? items[kbdIdx] : items[0];
+      if (target && target.hash) { input.value = ""; clear.style.display = "none"; closePop(); navigate(target.hash); }
+    }
+  });
+
+  document.addEventListener("click", (e) => { if (!box.contains(e.target)) closePop(); });
+
+  /* Ctrl/Cmd + K to focus search */
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      input.focus();
+      input.select();
+    }
+  });
+}

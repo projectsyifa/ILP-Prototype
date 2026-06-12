@@ -1,561 +1,139 @@
-<!DOCTYPE html>
-<html lang="id">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Masuk — ILP Academy 2026</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
-      background: #F0F4FB;
-      min-height: 100dvh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 24px 16px;
-      -webkit-font-smoothing: antialiased;
-    }
+# Setup Google Integration — ILP Academy
 
-    /* Card */
-    .login-card {
-      width: 100%;
-      max-width: 420px;
-      background: #fff;
-      border-radius: 24px;
-      box-shadow: 0 4px 24px rgba(15,27,45,0.1);
-      overflow: hidden;
-    }
+Integrasi Google (Forms, Drive) menggunakan **OAuth 2.0 Refresh Token**.
+Cocok untuk akun Gmail biasa — tidak perlu Google Workspace.
 
-    /* Header */
-    .login-header {
-      background: linear-gradient(135deg, #1A437B 0%, #2E65B8 100%);
-      padding: 28px 28px 24px;
-      text-align: center;
-      position: relative;
-      overflow: hidden;
-    }
-    .login-header::before {
-      content: '';
-      position: absolute;
-      width: 200px; height: 200px;
-      background: rgba(255,255,255,0.06);
-      border-radius: 50%;
-      right: -60px; top: -80px;
-    }
-    .login-logos {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 12px;
-      margin-bottom: 14px;
-      position: relative;
-    }
-    .login-logo { height: 44px; width: auto; object-fit: contain; filter: brightness(0) invert(1); }
-    .login-logo-divider { width: 1px; height: 36px; background: rgba(255,255,255,0.35); }
-    .login-logo-ktm { height: 36px; }
-    .login-program-name { font-size: 18px; font-weight: 800; color: #fff; letter-spacing: -0.01em; position: relative; }
-    .login-program-sub { font-size: 12.5px; color: rgba(255,255,255,0.7); margin-top: 4px; position: relative; }
+---
 
-    /* Form area */
-    .login-body { padding: 24px 28px 28px; }
-    .login-title { font-size: 17px; font-weight: 800; color: #0F1B2D; margin-bottom: 4px; }
-    .login-subtitle { font-size: 13px; color: #64748B; margin-bottom: 22px; }
+## Langkah 1 — Buat Project Baru di Google Cloud Console
 
-    /* Alert box */
-    .alert-box {
-      border-radius: 12px;
-      padding: 12px 14px;
-      font-size: 13px;
-      font-weight: 500;
-      margin-bottom: 16px;
-      display: none;
-      gap: 10px;
-      align-items: flex-start;
-      line-height: 1.5;
-    }
-    .alert-box.show { display: flex; }
-    .alert-box.error {
-      background: #FEF2F2;
-      color: #991B1B;
-      border: 1px solid #FECACA;
-    }
-    .alert-box.warning {
-      background: #FFFBEB;
-      color: #92400E;
-      border: 1px solid #FDE68A;
-    }
-    .alert-box.success {
-      background: #F0FDF4;
-      color: #14532D;
-      border: 1px solid #BBF7D0;
-    }
-    .alert-icon { flex-shrink: 0; margin-top: 1px; }
-    .alert-content { flex: 1; }
-    .alert-title { font-weight: 700; margin-bottom: 2px; }
-    .alert-hint { font-size: 12px; opacity: 0.85; margin-top: 3px; }
+1. Buka https://console.cloud.google.com
+2. Klik dropdown project di atas → **"New Project"**
+3. Isi nama project (contoh: `ILP Academy 2026`) → **Create**
+4. Pastikan project baru tersebut sudah dipilih (terlihat di header)
 
-    /* Field */
-    .field { margin-bottom: 14px; }
-    .field-error input.inp { border-color: #EF4444 !important; }
-    .field-hint {
-      font-size: 11.5px;
-      color: #EF4444;
-      margin-top: 5px;
-      display: none;
-    }
-    .field-error .field-hint { display: block; }
+---
 
-    label.lbl {
-      display: block;
-      font-size: 13px;
-      font-weight: 600;
-      color: #334155;
-      margin-bottom: 6px;
-    }
+## Langkah 2 — Aktifkan APIs
 
-    /* Password wrapper */
-    .pw-wrap { position: relative; }
-    .pw-wrap input.inp { padding-right: 44px; }
-    .pw-toggle {
-      position: absolute;
-      right: 12px;
-      top: 50%;
-      transform: translateY(-50%);
-      background: none;
-      border: none;
-      cursor: pointer;
-      padding: 4px;
-      color: #94A3B8;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 6px;
-      transition: color 0.15s;
-    }
-    .pw-toggle:hover { color: #475569; }
+1. Menu **APIs & Services → Library**
+2. Cari dan klik **Google Forms API** → **Enable**
+3. Cari dan klik **Google Drive API** → **Enable**
 
-    input.inp {
-      width: 100%;
-      border: 1.5px solid #E2E8F0;
-      border-radius: 12px;
-      padding: 11px 14px;
-      font-size: 14px;
-      font-family: inherit;
-      color: #0F1B2D;
-      background: #fff;
-      outline: none;
-      transition: border 0.15s, box-shadow 0.15s;
-    }
-    input.inp:focus {
-      border-color: #215AA9;
-      box-shadow: 0 0 0 3px rgba(33,90,169,0.12);
-    }
+---
 
-    /* Caps Lock warning */
-    .caps-warn {
-      display: none;
-      align-items: center;
-      gap: 6px;
-      font-size: 11.5px;
-      color: #92400E;
-      background: #FFFBEB;
-      border: 1px solid #FDE68A;
-      border-radius: 8px;
-      padding: 6px 10px;
-      margin-top: 6px;
-    }
-    .caps-warn.show { display: flex; }
+## Langkah 3 — Setup OAuth Consent Screen
 
-    .btn-submit {
-      width: 100%;
-      height: 48px;
-      background: linear-gradient(135deg, #1A437B, #215AA9);
-      color: #fff;
-      border: none;
-      border-radius: 12px;
-      font-size: 15px;
-      font-weight: 700;
-      font-family: inherit;
-      cursor: pointer;
-      transition: all 0.15s;
-      box-shadow: 0 2px 10px rgba(33,90,169,0.3);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-    }
-    .btn-submit:hover:not(:disabled) { box-shadow: 0 4px 18px rgba(33,90,169,0.42); transform: translateY(-1px); }
-    .btn-submit:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
-    .btn-spin {
-      width: 16px; height: 16px;
-      border: 2px solid rgba(255,255,255,0.4);
-      border-top-color: #fff;
-      border-radius: 50%;
-      animation: spin 0.7s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
+1. Menu **APIs & Services → OAuth consent screen** (atau **Google Auth Platform → Audience**)
+2. Klik **"Get started"** atau **"Configure consent screen"**
+3. Isi:
+   - App name: `ILP Academy`
+   - User support email: email Google Anda
+   - Developer contact email: email Google Anda
+4. Klik **Save and Continue**
+5. Di bagian **Scopes**, klik **"Add or Remove Scopes"**, tambahkan:
+   - `https://www.googleapis.com/auth/forms.body`
+   - `https://www.googleapis.com/auth/forms.responses.readonly`
+   - `https://www.googleapis.com/auth/drive`
+6. Klik **Update** → **Save and Continue**
+7. Di bagian **Test users**, klik **"+ Add users"**, masukkan email Google Anda sendiri
+8. **Save and Continue** → **Back to Dashboard**
 
-    /* Forgot password inline */
-    .btn-link {
-      background: none; border: none;
-      color: #215AA9; font-size: 13px; font-weight: 600;
-      cursor: pointer; font-family: inherit; padding: 4px 0;
-    }
-    .btn-link:hover { text-decoration: underline; }
-    .btn-link-muted {
-      background: none; border: none;
-      color: #64748B; font-size: 12.5px;
-      cursor: pointer; font-family: inherit;
-    }
-    .btn-link-muted:hover { text-decoration: underline; }
+---
 
-    .divider { border: none; border-top: 1px solid #E2E8F0; margin: 4px 0 18px; }
+## Langkah 4 — Buat OAuth 2.0 Client ID
 
-    .login-note {
-      text-align: center;
-      font-size: 12px;
-      color: #94A3B8;
-      margin-top: 18px;
-      line-height: 1.6;
-    }
-    .login-footer {
-      text-align: center;
-      font-size: 11.5px;
-      color: #94A3B8;
-      margin-top: 20px;
-    }
+1. Menu **APIs & Services → Credentials** (atau **Google Auth Platform → Clients**)
+2. Klik **"+ Create Credentials" → "OAuth client ID"**
+3. Isi:
+   - Application type: **Web application**
+   - Name: `ILP Backend`
+   - **Authorized redirect URIs**: klik **"+ Add URI"** → masukkan:
+     `https://developers.google.com/oauthplayground`
+4. Klik **Create**
+5. Catat **Client ID** dan **Client Secret** yang muncul (atau download JSON-nya)
 
-    /* SVG icons inline */
-    .ic { display: inline-block; vertical-align: middle; }
-  </style>
-</head>
-<body data-page="login">
+---
 
-  <div class="login-card">
+## Langkah 5 — Generate Refresh Token via OAuth Playground
 
-    <div class="login-header">
-      <div class="login-logos">
-        <img src="assets/inspiring-lecturer-logo.png" alt="Inspiring Lecturer" class="login-logo" />
-        <div class="login-logo-divider"></div>
-        <img src="assets/ktm_solutions_id_logo.png" alt="KTM Solutions" class="login-logo login-logo-ktm" />
-      </div>
-      <p class="login-program-name">ILP Academy 2026</p>
-      <p class="login-program-sub">Inspiring Lecturer Program by ParagonCorp</p>
-    </div>
+1. Buka https://developers.google.com/oauthplayground
+2. Klik ikon **gear (⚙)** di kanan atas
+3. Centang **"Use your own OAuth credentials"**
+4. Isi **OAuth Client ID** dan **OAuth Client Secret** dari Langkah 4 → tutup panel
+5. Di panel kiri **(Step 1 — Select & authorize APIs)**:
+   - Di kotak **"Input your own scopes"** paling bawah, ketik:
+     ```
+     https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/forms.body https://www.googleapis.com/auth/forms.responses.readonly
+     ```
+   - Klik **"Authorize APIs"**
+6. Login dengan akun Google yang sama dengan test user di Langkah 3 → klik **Allow**
+7. Di **(Step 2 — Exchange authorization code for tokens)**:
+   - Klik **"Exchange authorization code for tokens"**
+8. Salin nilai **Refresh token** (dimulai dengan `1//...`) dari panel kanan
 
-    <div class="login-body">
-      <p class="login-title">Masuk ke akun Anda</p>
-      <p class="login-subtitle">Gunakan email yang digunakan saat pendaftaran program dan password yang diberikan oleh Admin Program melalui email.</p>
+---
 
-      <!-- Alert notifikasi -->
-      <div class="alert-box" id="loginAlert" role="alert">
-        <span class="alert-icon" id="loginAlertIcon"></span>
-        <div class="alert-content">
-          <div class="alert-title" id="loginAlertTitle"></div>
-          <div class="alert-hint" id="loginAlertHint"></div>
-        </div>
-      </div>
+## Langkah 6 — Simpan Secrets di Supabase
 
-      <!-- Form Login -->
-      <form id="loginForm" novalidate>
-        <div class="field" id="fieldEmail">
-          <label class="lbl" for="email">Email</label>
-          <input class="inp" id="email" name="email" type="email" placeholder="nama@institusi.ac.id" autocomplete="email" />
-          <p class="field-hint" id="hintEmail"></p>
-        </div>
+1. Buka **Supabase Dashboard → Settings → Edge Functions → Secrets**
+2. Tambahkan (atau update) tiga secrets berikut:
 
-        <div class="field" id="fieldPassword">
-          <label class="lbl" for="password">Password</label>
-          <div class="pw-wrap">
-            <input class="inp" id="password" name="password" type="password" placeholder="••••••••" autocomplete="current-password" />
-            <button type="button" class="pw-toggle" id="pwToggle" aria-label="Tampilkan password" title="Tampilkan/sembunyikan password">
-              <svg id="pwIconShow" class="ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
-              </svg>
-              <svg id="pwIconHide" class="ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
-                <path d="M17.9 17.9A10.9 10.9 0 0 1 12 20C5 20 1 12 1 12a19.4 19.4 0 0 1 5.1-6.9M9.9 4.2A10.5 10.5 0 0 1 12 4c7 0 11 8 11 8a19.6 19.6 0 0 1-2.3 3.6M1 1l22 22"/>
-              </svg>
-            </button>
-          </div>
-          <div class="caps-warn" id="capsWarn">
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.3 3.6 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
-            Caps Lock aktif — huruf akan menjadi kapital semua.
-          </div>
-          <p class="field-hint" id="hintPassword"></p>
-        </div>
+| Name | Value |
+|------|-------|
+| `GOOGLE_CLIENT_ID` | Client ID dari Langkah 4 |
+| `GOOGLE_CLIENT_SECRET` | Client Secret dari Langkah 4 |
+| `GOOGLE_REFRESH_TOKEN` | Refresh token dari Langkah 5 |
 
-        <button class="btn-submit" type="submit" id="loginBtn">Masuk</button>
-        <div style="text-align:center;margin-top:14px">
-          <button type="button" class="btn-link" id="forgotBtn">Lupa Password?</button>
-        </div>
-      </form>
+> Hapus `GOOGLE_SERVICE_ACCOUNT_JSON` jika masih ada (tidak dipakai).
 
-      <!-- Section Lupa Password -->
-      <div id="forgotSection" style="display:none;margin-top:4px">
-        <hr class="divider" />
-        <p style="font-size:13px;font-weight:700;color:#0F1B2D;margin-bottom:4px">Reset Password</p>
-        <p style="font-size:12.5px;color:#64748B;margin-bottom:14px">Masukkan email Anda. Kami akan mengirimkan tautan untuk membuat password baru.</p>
+---
 
-        <div class="alert-box" id="resetAlert" role="alert">
-          <span class="alert-icon" id="resetAlertIcon"></span>
-          <div class="alert-content">
-            <div class="alert-title" id="resetAlertTitle"></div>
-            <div class="alert-hint" id="resetAlertHint"></div>
-          </div>
-        </div>
+## Langkah 7 — Deploy Edge Functions
 
-        <div class="field" id="fieldResetEmail">
-          <label class="lbl" for="resetEmail">Email</label>
-          <input class="inp" id="resetEmail" type="email" placeholder="nama@institusi.ac.id" autocomplete="email" />
-          <p class="field-hint" id="hintResetEmail"></p>
-        </div>
-        <button class="btn-submit" type="button" id="resetSubmitBtn">Kirim Tautan Reset</button>
-        <div style="text-align:center;margin-top:12px">
-          <button type="button" class="btn-link-muted" id="backToLoginBtn">← Kembali ke halaman masuk</button>
-        </div>
-      </div>
+Jalankan di terminal dari folder project:
 
-      <p class="login-note" id="loginNote">
-        Akses hanya untuk peserta terdaftar.<br>
-        Hubungi admin program jika Anda belum memiliki akun.
-      </p>
-    </div>
+```bash
+npx supabase functions deploy google-form-create
+npx supabase functions deploy google-form-schema
+npx supabase functions deploy google-form-responses
+npx supabase functions deploy google-drive-setup
+npx supabase functions deploy google-drive-upload
+npx supabase functions deploy google-drive-organize
+```
 
-  </div>
+Atau sekaligus:
 
-  <p class="login-footer">© 2026 ParagonCorp — All rights reserved.</p>
+```bash
+npx supabase functions deploy google-form-create google-form-schema google-form-responses google-drive-setup google-drive-upload google-drive-organize
+```
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="assets/auth.js"></script>
-  <script src="scripts/main.js"></script>
-  <script>
-    /* ── Icon helpers ── */
-    const IC_ERROR   = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg>`;
-    const IC_WARN    = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.6 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>`;
-    const IC_SUCCESS = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>`;
+---
 
-    /* ── Show alert ── */
-    function showAlert(id, type, title, hint) {
-      const box   = document.getElementById(id);
-      const icEl  = document.getElementById(id + "Icon");
-      const ttlEl = document.getElementById(id + "Title");
-      const hintEl= document.getElementById(id + "Hint");
-      box.className = "alert-box show " + type;
-      icEl.innerHTML = type === "error" ? IC_ERROR : type === "warning" ? IC_WARN : IC_SUCCESS;
-      ttlEl.textContent = title;
-      hintEl.textContent = hint || "";
-      hintEl.style.display = hint ? "block" : "none";
-    }
-    function hideAlert(id) {
-      document.getElementById(id).className = "alert-box";
-    }
+## Verifikasi
 
-    /* ── Field error helpers ── */
-    function fieldError(fieldId, hintId, msg) {
-      document.getElementById(fieldId).classList.add("field-error");
-      const h = document.getElementById(hintId);
-      h.textContent = msg; h.style.display = "block";
-    }
-    function fieldClear(fieldId, hintId) {
-      document.getElementById(fieldId).classList.remove("field-error");
-      const h = document.getElementById(hintId);
-      h.textContent = ""; h.style.display = "none";
-    }
-    function clearAllFieldErrors() {
-      fieldClear("fieldEmail", "hintEmail");
-      fieldClear("fieldPassword", "hintPassword");
-    }
+Setelah selesai, buka halaman **Admin → Materi** di app. Jika setup berhasil, folder berikut otomatis terbuat di Google Drive Anda dalam folder **ILP 2026**:
 
-    /* ── Show/hide password ── */
-    const pwInput    = document.getElementById("password");
-    const pwToggle   = document.getElementById("pwToggle");
-    const pwIconShow = document.getElementById("pwIconShow");
-    const pwIconHide = document.getElementById("pwIconHide");
+```
+ILP 2026/
+├── Formulir/
+│   ├── Presensi/
+│   ├── Pretest/
+│   ├── Post Test/
+│   ├── Tugas/
+│   ├── Laporan Mandiri/
+│   └── Feedback/
+├── Materi/
+├── Tugas Peserta/
+├── Data Peserta/
+└── Laporan & Analitik/
+```
 
-    pwToggle.addEventListener("click", () => {
-      const visible = pwInput.type === "text";
-      pwInput.type = visible ? "password" : "text";
-      pwIconShow.style.display = visible ? "block" : "none";
-      pwIconHide.style.display = visible ? "none"  : "block";
-      pwToggle.setAttribute("aria-label", visible ? "Tampilkan password" : "Sembunyikan password");
-    });
+---
 
-    /* ── Caps Lock detection ── */
-    const capsWarn = document.getElementById("capsWarn");
-    pwInput.addEventListener("keyup", (e) => {
-      capsWarn.classList.toggle("show", e.getModifierState && e.getModifierState("CapsLock"));
-    });
-    pwInput.addEventListener("keydown", (e) => {
-      capsWarn.classList.toggle("show", e.getModifierState && e.getModifierState("CapsLock"));
-    });
+## Cara Kerja
 
-    /* ── Trim spasi saat paste di field email ── */
-    document.getElementById("email").addEventListener("paste", (e) => {
-      setTimeout(() => {
-        e.target.value = e.target.value.trim();
-      }, 0);
-    });
-
-    /* ── Validasi form sebelum submit ── */
-    function validateLoginForm(email, password) {
-      let valid = true;
-      clearAllFieldErrors();
-      if (!email) {
-        fieldError("fieldEmail", "hintEmail", "Silakan masukkan alamat email.");
-        valid = false;
-      } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        fieldError("fieldEmail", "hintEmail", "Format email belum sesuai. Contoh: nama@email.com");
-        valid = false;
-      }
-      if (!password) {
-        fieldError("fieldPassword", "hintPassword", "Silakan masukkan password.");
-        valid = false;
-      }
-      return valid;
-    }
-
-    /* ── Map error Supabase → pesan ramah ── */
-    function mapLoginError(msg) {
-      const m = (msg || "").toLowerCase();
-      if (m.includes("invalid login") || m.includes("invalid credentials") || m.includes("invalid grant") || m.includes("wrong password") || m.includes("password")) {
-        return {
-          title: "Email atau password yang Anda masukkan tidak sesuai.",
-          hint: "Pastikan email dan password sudah sesuai dengan yang diberikan oleh admin program."
-        };
-      }
-      if (m.includes("user not found") || m.includes("no user") || m.includes("email not found")) {
-        return {
-          title: "Email belum terdaftar pada sistem.",
-          hint: "Silakan periksa kembali email yang digunakan atau hubungi admin program."
-        };
-      }
-      if (m.includes("email not confirmed") || m.includes("not confirmed") || m.includes("not active")) {
-        return {
-          title: "Akun Anda belum aktif.",
-          hint: "Silakan hubungi admin program untuk mendapatkan bantuan."
-        };
-      }
-      if (m.includes("too many") || m.includes("rate limit") || m.includes("over_request_rate_limit")) {
-        return {
-          title: "Terlalu banyak percobaan login.",
-          hint: "Silakan coba kembali beberapa menit lagi."
-        };
-      }
-      return {
-        title: "Terjadi kendala pada sistem.",
-        hint: "Silakan coba kembali beberapa saat lagi."
-      };
-    }
-
-    /* ── Submit login form ── */
-    const loginForm = document.getElementById("loginForm");
-    const loginBtn  = document.getElementById("loginBtn");
-
-    loginForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      hideAlert("loginAlert");
-      const email    = document.getElementById("email").value.trim();
-      const password = document.getElementById("password").value;
-
-      if (!validateLoginForm(email, password)) return;
-
-      loginBtn.disabled = true;
-      loginBtn.innerHTML = `<span class="btn-spin"></span> Memproses...`;
-
-      const { error } = await _supabase.auth.signInWithPassword({ email, password });
-      if (error) {
-        const { title, hint } = mapLoginError(error.message);
-        showAlert("loginAlert", "error", title, hint);
-        loginBtn.disabled = false;
-        loginBtn.innerHTML = "Masuk";
-        return;
-      }
-      const p = await getProfile();
-      window.location.href = p && p.role === "admin" ? "app.html#admin" : "app.html#dashboard";
-    });
-
-    /* ── Clear field error on input ── */
-    document.getElementById("email").addEventListener("input", () => {
-      fieldClear("fieldEmail", "hintEmail");
-      hideAlert("loginAlert");
-    });
-    document.getElementById("password").addEventListener("input", () => {
-      fieldClear("fieldPassword", "hintPassword");
-      hideAlert("loginAlert");
-    });
-
-    /* ── Lupa password ── */
-    const forgotBtn     = document.getElementById("forgotBtn");
-    const forgotSection = document.getElementById("forgotSection");
-    const loginNote     = document.getElementById("loginNote");
-    const backToLoginBtn= document.getElementById("backToLoginBtn");
-    const resetSubmitBtn= document.getElementById("resetSubmitBtn");
-
-    forgotBtn.addEventListener("click", () => {
-      loginForm.style.display = "none";
-      loginNote.style.display = "none";
-      forgotSection.style.display = "block";
-      document.getElementById("resetEmail").focus();
-    });
-
-    backToLoginBtn.addEventListener("click", () => {
-      forgotSection.style.display = "none";
-      loginForm.style.display = "block";
-      loginNote.style.display = "block";
-      hideAlert("resetAlert");
-      fieldClear("fieldResetEmail", "hintResetEmail");
-      document.getElementById("resetEmail").value = "";
-    });
-
-    document.getElementById("resetEmail").addEventListener("paste", (e) => {
-      setTimeout(() => { e.target.value = e.target.value.trim(); }, 0);
-    });
-    document.getElementById("resetEmail").addEventListener("input", () => {
-      fieldClear("fieldResetEmail", "hintResetEmail");
-      hideAlert("resetAlert");
-    });
-
-    resetSubmitBtn.addEventListener("click", async () => {
-      hideAlert("resetAlert");
-      fieldClear("fieldResetEmail", "hintResetEmail");
-      const email = document.getElementById("resetEmail").value.trim();
-
-      if (!email) {
-        fieldError("fieldResetEmail", "hintResetEmail", "Silakan masukkan alamat email.");
-        return;
-      }
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        fieldError("fieldResetEmail", "hintResetEmail", "Format email belum sesuai. Contoh: nama@email.com");
-        return;
-      }
-
-      resetSubmitBtn.disabled = true;
-      resetSubmitBtn.innerHTML = `<span class="btn-spin"></span> Mengirim...`;
-
-      const { error } = await _supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: window.location.origin + "/set-password.html"
-      });
-
-      resetSubmitBtn.disabled = false;
-      resetSubmitBtn.innerHTML = "Kirim Tautan Reset";
-
-      if (error) {
-        showAlert("resetAlert", "error",
-          "Tidak dapat mengirim email reset.",
-          "Silakan periksa kembali alamat email yang digunakan atau coba beberapa saat lagi."
-        );
-      } else {
-        showAlert("resetAlert", "success",
-          "Tautan reset password telah dikirim.",
-          "Silakan periksa kotak masuk email " + email + ". Jika tidak ada, periksa folder Spam."
-        );
-      }
-    });
-  </script>
-</body>
-</html>
+- **Form** dibuat di Google Drive akun Anda (via Forms API) dan diorganisir ke subfolder yang sesuai
+- **File materi & tugas** diunggah ke Google Drive, tersimpan di subfolder yang tepat
+- **Respons form** dikirim ke Google Forms dan dicatat di Supabase (data prefill saja)
+- Semua file di-share "anyone with link" — bisa diakses inline di web via iframe

@@ -1,0 +1,93 @@
+/**
+ * Edge Function: google-form-update
+ * Add new questions to an existing Google Form via batchUpdate.
+ * Only adds questions whose labels are NOT already in the form.
+ *
+ * POST { formId, fields: [{type, label, options?, required?}] }
+ * Returns: { ok, added, questionIds }
+ */
+
+import { getGoogleAccessToken } from "../_shared/google-auth.ts";
+import { corsHeaders, ok, err } from "../_shared/cors.ts";
+
+const FORMS_API = "https://forms.googleapis.com/v1/forms";
+
+const hexToDec = (h: string): string =>
+  /^[0-9a-f]+$/i.test(h) && !/^\d+$/.test(h) ? parseInt(h, 16).toString() : h;
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  try {
+    const { formId, fields } = await req.json();
+    if (!formId) return err("formId wajib diisi.");
+    if (!Array.isArray(fields) || !fields.length) return ok({ added: 0, questionIds: {} });
+
+    const token = await getGoogleAccessToken([
+      "https://www.googleapis.com/auth/forms.body",
+      "https://www.googleapis.com/auth/drive",
+    ]);
+    const authH = { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" };
+
+    // Fetch current form to know existing question labels and count
+    const formRes = await fetch(`${FORMS_API}/${formId}`, { headers: authH });
+    const formData = await formRes.json();
+    if (formData.error) throw new Error("Gagal membaca form: " + formData.error.message);
+
+    const existingLabels = new Set<string>(
+      (formData.items || []).map((item: { title?: string }) => item.title || "")
+    );
+    const currentCount = (formData.items || []).length;
+
+    // Only add fields that don't already exist
+    const newFields = (fields as { type: string; label: string; options?: string[]; required?: boolean }[])
+      .filter(f => !existingLabels.has(f.label));
+
+    if (!newFields.length) return ok({ added: 0, questionIds: {} });
+
+    // Build batchUpdate requests
+    const requests = newFields.map((fld, i) => {
+      const question: Record<string, unknown> = { required: fld.required ?? false };
+
+      if (fld.type === "radio" || fld.type === "select") {
+        question.choiceQuestion = { type: "RADIO", options: (fld.options || []).map(o => ({ value: o })) };
+      } else if (fld.type === "checkbox") {
+        question.choiceQuestion = { type: "CHECKBOX", options: (fld.options || []).map(o => ({ value: o })) };
+      } else if (fld.type === "rating") {
+        question.scaleQuestion = { low: 1, high: 5, lowLabel: "Sangat Buruk", highLabel: "Sangat Baik" };
+      } else if (fld.type === "textarea") {
+        question.textQuestion = { paragraph: true };
+      } else {
+        question.textQuestion = { paragraph: false };
+      }
+
+      return {
+        createItem: {
+          item: { title: fld.label, questionItem: { question } },
+          location: { index: currentCount + i },
+        },
+      };
+    });
+
+    const batchRes = await fetch(`${FORMS_API}/${formId}:batchUpdate`, {
+      method: "POST",
+      headers: authH,
+      body: JSON.stringify({ requests }),
+    });
+    const batchData = await batchRes.json();
+    if (batchData.error) throw new Error("batchUpdate gagal: " + batchData.error.message);
+
+    // Extract new questionIds
+    const questionIds: Record<string, string> = {};
+    const replies: unknown[] = batchData.replies || [];
+    newFields.forEach((fld, i) => {
+      const reply = replies[i] as { createItem?: { questionId?: string[] } } | undefined;
+      const qId = reply?.createItem?.questionId?.[0];
+      if (qId) questionIds[fld.label] = hexToDec(qId);
+    });
+
+    return ok({ added: newFields.length, questionIds });
+  } catch (e) {
+    return err((e as Error).message, 500);
+  }
+});

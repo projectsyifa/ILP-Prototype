@@ -6,7 +6,7 @@
    Bump CACHE_VER to wipe all caches on next visit.
    ===================================================================== */
 
-const CACHE_VER = "ilp-v146";
+const CACHE_VER = "ilp-v201";
 
 /* Install: skip waiting so new SW activates immediately */
 self.addEventListener("install", () => self.skipWaiting());
@@ -28,7 +28,7 @@ self.addEventListener("fetch", (e) => {
   if (
     url.hostname.includes("supabase.co") ||
     url.hostname.includes("googleapis.com") ||
-    url.hostname.includes("jsdelivr.net") ||
+    url.hostname.includes("jsdelivr.net") || url.hostname.includes("unpkg.com") ||
     url.hostname.includes("fonts.g")
   ) return;
 
